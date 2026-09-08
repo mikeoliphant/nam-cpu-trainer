@@ -10,6 +10,7 @@
 #include "NeuralModel.h"
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
+#include "argparse.hpp"
 #include "WaveNet.h"
 #include "WaveNetBackprop.h"
 #include "ModelTrainer.h"
@@ -63,7 +64,7 @@ static void TestNAM(std::filesystem::path modelPath)
 }
 
 template <typename ModelTrainer>
-void TrainWav(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath)
+void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath)
 {
 	unsigned int channels;
 	unsigned int sampleRate;
@@ -87,8 +88,36 @@ void TrainWav(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 }
 
 
-int main()
+int main(int argc, char* argv[])
 {
+	argparse::ArgumentParser program("nam-cpu-trainer", "0.0.1");
+
+	program.add_argument("-i", "--input")
+		.nargs(1)
+		.required()
+		.metavar("<input.wav>")
+		.help("Input .wav file");
+
+	program.add_argument("-c", "--capture")
+		.nargs(1)
+		.required()
+		.metavar("<capture.wav>")
+		.help("Output captured .wav file");
+
+	try
+	{
+		program.parse_args(argc, argv);
+	}
+	catch (const std::runtime_error& err) {
+		std::cerr << err.what() << std::endl;
+		std::cerr << program;
+		return 1;
+	}
+
+	std::filesystem::path inputPath = program.get("--input");
+	std::filesystem::path capturePath = program.get("--capture");
+
+	
 	_MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
 	_MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
 
@@ -103,11 +132,6 @@ int main()
 
 	//TestNAM(R"(C:\Code\NeuralCpuTrainer\BossWN-a2lite.nam)");
 
-	using TestKernelSizes = std::integer_sequence<int, 6>;//, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 15, 15, 6, 6, 6, 6, 6, 6, 6>;
-	using TestDilations = std::integer_sequence<int, 1>;//, 17, 41, 101, 239, 1, 3, 7, 17, 41, 101, 239, 1, 13, 1, 3, 7, 17, 41, 101, 239>;
-
-	//auto a2 = new A2BackpropT<float, 1, 3, TestKernelSizes, TestDilations>();
-	//auto a2 = new ();
 
 	//std::cout << sizeof(A2BackpropT<float, 1, 8, A2KernelSizes, A2Dilations>) << std::endl;
 
@@ -117,7 +141,9 @@ int main()
 
 	//modelTrainer->TrainIdentity(sinData);
 
-	TrainWav(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
+	//TrainNAM(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
+
+	TrainNAM(modelTrainer, inputPath, capturePath);
 
 	return 0;
 }

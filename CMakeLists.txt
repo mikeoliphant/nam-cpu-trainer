@@ -39,6 +39,7 @@ add_executable(nam-cpu-trainer ${SOURCES})
 target_include_directories(nam-cpu-trainer PUBLIC deps/cpugrad)
 target_include_directories(nam-cpu-trainer PUBLIC deps/cpugrad/NeuralAudio/NeuralAudio)
 target_include_directories(nam-cpu-trainer PUBLIC deps/dr_libs)
+target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/argparse/include/argparse)
 target_link_libraries(nam-cpu-trainer PUBLIC cpugrad)
 
 source_group(nam-cpu-trainer ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCES})
