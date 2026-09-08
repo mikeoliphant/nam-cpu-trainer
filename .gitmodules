@@ -4,3 +4,6 @@
 [submodule "deps/cpugrad"]
 	path = deps/cpugrad
 	url = https://github.com/mikeoliphant/cpugrad
+[submodule "deps/argparse"]
+	path = deps/argparse
+	url = https://github.com/p-ranav/argparse
