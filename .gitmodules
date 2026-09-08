@@ -1,0 +1,6 @@
+[submodule "deps/dr_libs"]
+	path = deps/dr_libs
+	url = https://github.com/mackron/dr_libs
+[submodule "deps/cpugrad"]
+	path = deps/cpugrad
+	url = https://github.com/mikeoliphant/cpugrad
