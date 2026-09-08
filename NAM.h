@@ -2,7 +2,7 @@
 
 #include "ModelTrainer.h"
 
-using namespace NeuralCpuTrain;
+using namespace cpugrad;
 
 template <typename T, int ConditionSize, int Channels, int KernelSize, int Dilation>
 class WaveNetLayerBackpropT : public BackpropModelT<T, Channels, Channels>

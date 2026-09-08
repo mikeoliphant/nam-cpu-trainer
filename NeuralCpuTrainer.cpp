@@ -9,15 +9,15 @@
 
 #include "NeuralModel.h"
 #define DR_WAV_IMPLEMENTATION
+#include "dr_wav.h"
 #include "WaveNet.h"
 #include "WaveNetBackprop.h"
 #include "ModelTrainer.h"
 #include "NAM.h"
 #include "Dataset.h"
-#include "Tests.h"
 
 using namespace NeuralAudio;
-using namespace NeuralCpuTrain;
+using namespace cpugrad;
 
 static void TestNAM(std::filesystem::path modelPath)
 {
@@ -62,6 +62,31 @@ static void TestNAM(std::filesystem::path modelPath)
 	std::cout << "MSE: " << err << std::endl;
 }
 
+template <typename ModelTrainer>
+void TrainWav(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath)
+{
+	unsigned int channels;
+	unsigned int sampleRate;
+	drwav_uint64 numFrames;
+
+	float* inData = drwav_open_file_and_read_pcm_frames_f32(inWavePath.string().c_str(), &channels, &sampleRate, &numFrames, nullptr);
+	float* targetData = drwav_open_file_and_read_pcm_frames_f32(targetWavePath.string().c_str(), &channels, &sampleRate, &numFrames, nullptr);
+
+	size_t startOffset = 48000 * 13;
+
+	size_t verifyFrames = 48000 * 9;
+
+	size_t frameDelay = 0;
+
+	//startOffset = 0;
+	//verifyFrames = (size_t)(numFrames * 0.1f);
+
+	size_t verifyOffset = (size_t)numFrames - verifyFrames;
+
+	trainer->TrainModel(inData + startOffset - frameDelay, targetData + startOffset, (size_t)numFrames - verifyFrames - startOffset - frameDelay, inData + verifyOffset - frameDelay, targetData + verifyOffset, verifyFrames - frameDelay);
+}
+
+
 int main()
 {
 	_MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
@@ -78,40 +103,6 @@ int main()
 
 	//TestNAM(R"(C:\Code\NeuralCpuTrainer\BossWN-a2lite.nam)");
 
-
-	//auto denseTrainer = new ModelTrainerT<float, DenseBackpropT<float, 1, 1, false>>();
-
-	//denseTrainer->TestBackprop(0, randData.data(), randData.data(), MAX_BATCH_SIZE);
-
-	//denseTrainer->TrainIdentity(randData);
-
-
-	//denseTrainter->TestWav(R"(C:\Share\Recordings\NAM\v1_1_1.wav)", R"(C:\Share\Recordings\NAM\v1_1_1.wav)");
-
-	//auto convTrainer = new ModelTrainerT<float, Conv1DBackpropT<float, 1, 1, 2, true, 128>>();
-
-	//convTrainer->Train(delayData);
-
-	////convTrainer->TestWav(R"(C:\Share\Recordings\NAM\v1_1_1.wav)", R"(C:\Share\Recordings\NAM\v1_1_1.wav)");
-
-	//WaveNetLayerBackpropT<float, 1, 3, 1> wn;
-	//TestModel(wn);
-
-	//auto twoConvTrainer = new ModelTrainerT<float, TwoConvTestT<float, 1, 2, 128>>();
-
-	//twoConvTrainer->Train(delayData);
-
-	//auto convTestTrainer = new ModelTrainerT<float, ConvTestT<float, 1, 16, 3, 1, 1>>();
-
-	//convTestTrainer->TrainIdentity(randData);
-
-	//convTestTrainer->Train(xorData);
-
-	//convTestTrainer->TestWav(R"(C:\Share\Recordings\NAM\v1_1_1.wav)", R"(C:\Share\Recordings\NAM\v1_1_1.wav)");
-	//convTestTrainer->TestWav(R"(C:\Share\Recordings\NAM\v1_1_1.wav)", R"(C:\Share\Recordings\NAM\BossSD1.wav)");
-
-	//auto a2 = new A2BackpropT<float, 1, 3, A2KernelSizes, A2Dilations>();
-
 	using TestKernelSizes = std::integer_sequence<int, 6>;//, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 15, 15, 6, 6, 6, 6, 6, 6, 6>;
 	using TestDilations = std::integer_sequence<int, 1>;//, 17, 41, 101, 239, 1, 3, 7, 17, 41, 101, 239, 1, 13, 1, 3, 7, 17, 41, 101, 239>;
 
@@ -126,17 +117,7 @@ int main()
 
 	//modelTrainer->TrainIdentity(sinData);
 
-	modelTrainer->TrainWav(R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
-
-	//ChainBackpropModelT<float, 1, 1> chainBackProp;
-
-	//auto layer1 = std::make_unique<DenseBackpropT<float, 1, 2, false>>();
-	//auto layer2 = std::make_unique<DenseBackpropT<float, 2, 1, false>>();
-
-	//chainBackProp.AddLayer(std::move(layer1));
-	//chainBackProp.AddLayer(std::move(layer2));
-
-	//TestModel(chainBackProp);
+	TrainWav(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
 
 	return 0;
 }
