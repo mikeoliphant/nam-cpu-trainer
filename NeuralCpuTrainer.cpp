@@ -84,66 +84,119 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 
 	size_t verifyOffset = (size_t)numFrames - verifyFrames;
 
-	trainer->TrainModel(inData + startOffset - frameDelay, targetData + startOffset, (size_t)numFrames - verifyFrames - startOffset - frameDelay, inData + verifyOffset - frameDelay, targetData + verifyOffset, verifyFrames - frameDelay);
+	trainer.TrainModel(inData + startOffset - frameDelay, targetData + startOffset, (size_t)numFrames - verifyFrames - startOffset - frameDelay, inData + verifyOffset - frameDelay, targetData + verifyOffset, verifyFrames - frameDelay);
 }
 
+// Keeps the compiler happy
+void TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath)
+{	
+}
+
+template <int Channels>
+using A2Backprop = ModelTrainerT<float, A2BackpropT<float, 1, Channels, A2KernelSizes, A2Dilations>>;
+
+using A2Types = std::variant<std::nullptr_t, A2Backprop<1>, A2Backprop<2>, A2Backprop<3>, A2Backprop<4>, A2Backprop<8>, A2Backprop<16>>;
+
+A2Types GetTrainer(size_t numChannels)
+{
+	switch (numChannels)
+	{
+		case 1:
+			return A2Backprop<1>{};
+		case 2:
+			return A2Backprop<2>{};
+		case 3:
+			return A2Backprop<3>{};
+		case 4:
+			return A2Backprop<4>{};
+		case 8:
+			return A2Backprop<8>{};
+		case 16:
+			return A2Backprop<16>{};
+	}
+
+	return nullptr;
+}
 
 int main(int argc, char* argv[])
 {
+	std::cout << std::endl;
+	
 	argparse::ArgumentParser program("nam-cpu-trainer", "0.0.1");
 
 	program.add_argument("-i", "--input")
 		.nargs(1)
 		.required()
 		.metavar("<input.wav>")
-		.help("Input .wav file");
+		.help("Input .wav file use to capture");
 
-	program.add_argument("-c", "--capture")
+	program.add_argument("-o", "--output")
 		.nargs(1)
 		.required()
-		.metavar("<capture.wav>")
-		.help("Output captured .wav file");
+		.metavar("<output.wav>")
+		.help("Output (captured) .wav file");
+
+	program.add_argument("-c", "--channels")
+		.default_value(3)
+		.nargs(1)
+		.help("Number of channels")
+		.scan<'i', int>();
 
 	try
 	{
 		program.parse_args(argc, argv);
 	}
-	catch (const std::runtime_error& err) {
-		std::cerr << err.what() << std::endl;
+	catch (const std::exception& e)
+	{
+		std::cerr << std::endl << "Commandline parse error: " << e.what() << std::endl << std::endl;
 		std::cerr << program;
+
+		return 1;
+	}
+	catch (...)
+	{
+		std::cerr << std::endl << "Commandline parse error" << std::endl << std::endl;
+
+		std::cerr << program;
+
 		return 1;
 	}
 
 	std::filesystem::path inputPath = program.get("--input");
-	std::filesystem::path capturePath = program.get("--capture");
+	std::filesystem::path capturePath = program.get("--output");
 
 	
 	_MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
 	_MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
-
-	DataGen dataGen(123);
-
-	size_t numSamples = 48000 * 180;
-
-	auto randData = dataGen.GenerateRandom(numSamples);
-	auto sinData = dataGen.GenerateSin(numSamples, 8192);
-	auto delayData = dataGen.GenerateDelay(256, numSamples);
-	auto xorData = dataGen.GenerateXOR(1, numSamples);
 
 	//TestNAM(R"(C:\Code\NeuralCpuTrainer\BossWN-a2lite.nam)");
 
 
 	//std::cout << sizeof(A2BackpropT<float, 1, 8, A2KernelSizes, A2Dilations>) << std::endl;
 
-	auto modelTrainer = new ModelTrainerT<float, A2BackpropT<float, 1, 3, A2KernelSizes, A2Dilations>>();
+	size_t numChannels = (size_t)program.get<int>("--channels");
 
-	//modelTrainer->TestBackprop(0, randData.data(), randData.data(), MAX_BATCH_SIZE);
+	std::cout << "Training NAM A2 with " << numChannels << " channels" << std::endl;
 
-	//modelTrainer->TrainIdentity(sinData);
+	A2Types modelTrainerObj = GetTrainer(numChannels);
 
-	//TrainNAM(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
+	if (std::holds_alternative<std::nullptr_t>(modelTrainerObj))
+	{
+		std::cerr << std::endl << "Supported channel sizes are 1, 2, 4, 8 and 16" << std::endl;
 
-	TrainNAM(modelTrainer, inputPath, capturePath);
+		return 1;
+	}
+
+	std::visit([&](auto& modelTrainer)
+	{
+		//modelTrainer->TestBackprop(0, randData.data(), randData.data(), MAX_BATCH_SIZE);
+
+		//modelTrainer->TrainIdentity(sinData);
+
+		//TrainNAM(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
+
+		TrainNAM(modelTrainer, inputPath, capturePath);
+	}, modelTrainerObj);
 
 	return 0;
 }
