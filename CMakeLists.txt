@@ -36,6 +36,9 @@ set(SOURCES
 	NAM.h)
 
 add_executable(nam-cpu-trainer ${SOURCES})
+
+target_compile_definitions(nam-cpu-trainer PRIVATE NCT_VERSION_STRING="${PROJECT_VERSION}")
+
 target_include_directories(nam-cpu-trainer PUBLIC deps/cpugrad)
 target_include_directories(nam-cpu-trainer PUBLIC deps/cpugrad/NeuralAudio/NeuralAudio)
 target_include_directories(nam-cpu-trainer PUBLIC deps/dr_libs)

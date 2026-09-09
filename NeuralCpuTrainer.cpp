@@ -97,32 +97,30 @@ using A2Backprop = ModelTrainerT<float, A2BackpropT<float, 1, Channels, A2Kernel
 
 using A2Types = std::variant<std::nullptr_t, A2Backprop<1>, A2Backprop<2>, A2Backprop<3>, A2Backprop<4>, A2Backprop<8>, A2Backprop<16>>;
 
-A2Types GetTrainer(size_t numChannels)
+A2Types GetTrainer(size_t numChannels, size_t numThreads)
 {
 	switch (numChannels)
 	{
 		case 1:
-			return A2Backprop<1>{};
+			return A2Backprop<1>(numThreads);
 		case 2:
-			return A2Backprop<2>{};
+			return A2Backprop<2>(numThreads);
 		case 3:
-			return A2Backprop<3>{};
+			return A2Backprop<3>(numThreads);
 		case 4:
-			return A2Backprop<4>{};
+			return A2Backprop<4>(numThreads);
 		case 8:
-			return A2Backprop<8>{};
+			return A2Backprop<8>(numThreads);
 		case 16:
-			return A2Backprop<16>{};
+			return A2Backprop<16>(numThreads);
 	}
 
 	return nullptr;
 }
 
 int main(int argc, char* argv[])
-{
-	std::cout << std::endl;
-	
-	argparse::ArgumentParser program("nam-cpu-trainer", "0.0.1");
+{	
+	argparse::ArgumentParser program("nam-cpu-trainer", NCT_VERSION_STRING);
 
 	program.add_argument("-i", "--input")
 		.nargs(1)
@@ -139,9 +137,15 @@ int main(int argc, char* argv[])
 	program.add_argument("-c", "--channels")
 		.default_value(3)
 		.nargs(1)
+		.metavar("<numChannels>")
 		.help("Number of channels")
 		.scan<'i', int>();
 
+	program.add_argument("-t", "--threads")
+		.nargs(1)
+		.metavar("<numThreads>")
+		.help("Number of threads (defaults to detected # cores)")
+		.scan<'i', int>();
 	try
 	{
 		program.parse_args(argc, argv);
@@ -169,6 +173,10 @@ int main(int argc, char* argv[])
 	_MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
 	_MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
 
+
+	std::cout << std::endl << "nam-cpu-trainer v" << NCT_VERSION_STRING << std::endl;
+	std::cout << "Copyright 2026 Mike Oliphant (https://github.com/mikeoliphant/nam-cpu-trainer)" << std::endl << std::endl;
+
 	//TestNAM(R"(C:\Code\NeuralCpuTrainer\BossWN-a2lite.nam)");
 
 
@@ -176,9 +184,11 @@ int main(int argc, char* argv[])
 
 	size_t numChannels = (size_t)program.get<int>("--channels");
 
+	size_t numThreads = program.is_used("--threads") ? (size_t)program.get<int>("--threads") : 0;
+
 	std::cout << "Training NAM A2 with " << numChannels << " channels" << std::endl;
 
-	A2Types modelTrainerObj = GetTrainer(numChannels);
+	A2Types modelTrainerObj = GetTrainer(numChannels, numThreads);
 
 	if (std::holds_alternative<std::nullptr_t>(modelTrainerObj))
 	{
