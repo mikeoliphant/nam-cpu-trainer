@@ -64,7 +64,7 @@ static void TestNAM(std::filesystem::path modelPath)
 }
 
 template <typename ModelTrainer>
-void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath)
+void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs)
 {
 	unsigned int channels;
 	unsigned int sampleRate;
@@ -84,11 +84,12 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 
 	size_t verifyOffset = (size_t)numFrames - verifyFrames;
 
+	trainer.SetMaxEpochs(maxEpochs);
 	trainer.TrainModel(inData + startOffset - frameDelay, targetData + startOffset, (size_t)numFrames - verifyFrames - startOffset - frameDelay, inData + verifyOffset - frameDelay, targetData + verifyOffset, verifyFrames - frameDelay);
 }
 
 // Keeps the compiler happy
-void TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath)
+void TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs)
 {	
 }
 
@@ -146,6 +147,14 @@ int main(int argc, char* argv[])
 		.metavar("<numThreads>")
 		.help("Number of threads (defaults to detected # cores)")
 		.scan<'i', int>();
+
+	program.add_argument("-e", "--epochs")
+		.default_value(1000)
+		.nargs(1, 1)
+		.metavar("<maxEpochs>")
+		.help("Maximum number of epochs to train for")
+		.scan<'i', int>();
+
 	try
 	{
 		program.parse_args(argc, argv);
@@ -186,6 +195,9 @@ int main(int argc, char* argv[])
 
 	size_t numThreads = program.is_used("--threads") ? (size_t)program.get<int>("--threads") : 0;
 
+	size_t maxEpochs = ((size_t)program.get<int>("--epochs"));
+
+
 	std::cout << "Training NAM A2 with " << numChannels << " channels" << std::endl;
 
 	A2Types modelTrainerObj = GetTrainer(numChannels, numThreads);
@@ -205,7 +217,7 @@ int main(int argc, char* argv[])
 
 		//TrainNAM(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
 
-		TrainNAM(modelTrainer, inputPath, capturePath);
+		TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs);
 	}, modelTrainerObj);
 
 	return 0;
