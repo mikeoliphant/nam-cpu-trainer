@@ -3,6 +3,7 @@
 #include <random>
 #include <cassert>
 #include <cmath>
+#include <csignal>
 #include <filesystem>
 #include <fstream>
 #include <xmmintrin.h>
@@ -12,10 +13,10 @@
 #include "dr_wav.h"
 #include "argparse.hpp"
 #include "WaveNet.h"
-#include "WaveNetBackprop.h"
 #include "ModelTrainer.h"
 #include "NAM.h"
 #include "Dataset.h"
+#include "a2json.h"
 
 using namespace NeuralAudio;
 using namespace cpugrad;
@@ -47,8 +48,8 @@ static void TestNAM(std::filesystem::path modelPath)
 
 	auto it = weights.begin();
 
-	modelTrainer->GetModel()->SetWeights(it);
-	modelTrainer->GetModel()->SetHeadScale(*it);
+	modelTrainer->GetModel().SetWeights(it);
+	modelTrainer->GetModel().SetHeadScale(*it);
 
 	std::vector<float> verifyOutput(numSamples);
 
@@ -63,12 +64,31 @@ static void TestNAM(std::filesystem::path modelPath)
 	std::cout << "MSE: " << err << std::endl;
 }
 
+volatile sig_atomic_t keepRunning = 1;
+
+void SignalHandler(int signal_num)
+{
+	if (signal_num == SIGINT)
+	{
+		std::cout << std::endl << "Aborting after next epoch. Press ctl-c again to force exit." << std::endl;
+
+		keepRunning = 0; // Set flag to break the loop
+	}
+}
+
+bool EpochCallback(size_t epoch, double loss)
+{
+	return (keepRunning == 1);
+}
+
 template <typename ModelTrainer>
-void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs)
+std::vector<float> TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs)
 {
 	unsigned int channels;
 	unsigned int sampleRate;
 	drwav_uint64 numFrames;
+
+	std::signal(SIGINT, SignalHandler);
 
 	float* inData = drwav_open_file_and_read_pcm_frames_f32(inWavePath.string().c_str(), &channels, &sampleRate, &numFrames, nullptr);
 	float* targetData = drwav_open_file_and_read_pcm_frames_f32(targetWavePath.string().c_str(), &channels, &sampleRate, &numFrames, nullptr);
@@ -85,12 +105,25 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 	size_t verifyOffset = (size_t)numFrames - verifyFrames;
 
 	trainer.SetMaxEpochs(maxEpochs);
+	trainer.SetEpochCallback(EpochCallback);
+
 	trainer.TrainModel(inData + startOffset - frameDelay, targetData + startOffset, (size_t)numFrames - verifyFrames - startOffset - frameDelay, inData + verifyOffset - frameDelay, targetData + verifyOffset, verifyFrames - frameDelay);
+
+	auto weights = trainer.GetBestWeights();
+
+	weights.push_back(trainer.GetModel().GetHeadScale());
+
+	double bestLoss = trainer.GetBestLoss();
+
+	std::cout << std::endl << "Best ESR: " << std::format("{:.8f}", bestLoss) << std::endl;
+
+	return weights;
 }
 
 // Keeps the compiler happy
-void TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs)
-{	
+std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs)
+{
+	return std::vector<float>();
 }
 
 template <int Channels>
@@ -117,6 +150,19 @@ A2Types GetTrainer(size_t numChannels, size_t numThreads)
 	}
 
 	return nullptr;
+}
+
+void ReplaceVariable(std::string& str, const std::string& from, const std::string& to)
+{
+	if (from.empty()) return;
+
+	size_t start_pos = 0;
+
+	while ((start_pos = str.find(from, start_pos)) != std::string::npos)
+	{
+		str.replace(start_pos, from.length(), to);
+		start_pos += to.length();
+	}
 }
 
 int main(int argc, char* argv[])
@@ -178,6 +224,8 @@ int main(int argc, char* argv[])
 	std::filesystem::path inputPath = program.get("--input");
 	std::filesystem::path capturePath = program.get("--output");
 
+	std::filesystem::path outputNAMPath = capturePath;
+	outputNAMPath.replace_extension(".nam");
 	
 	_MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
 	_MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
@@ -217,7 +265,59 @@ int main(int argc, char* argv[])
 
 		//TrainNAM(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
 
-		TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs);
+		std::vector<float> weights = TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs);
+
+		std::string weightStr;
+
+		for (size_t i = 0; i < weights.size(); ++i) {
+			std::format_to(std::back_inserter(weightStr), "{:.9g}", weights[i]);
+
+			if (i < weights.size() - 1) {
+				weightStr += ", ";
+			}
+		}
+
+		auto now = std::chrono::system_clock::now();
+		auto system_days = std::chrono::floor<std::chrono::days>(now);
+		std::chrono::year_month_day ymd{ system_days };
+		std::chrono::hh_mm_ss hms{ std::chrono::floor<std::chrono::seconds>(now - system_days) };
+
+		std::string dateStr = std::format(
+			"{{ "
+			" \"year\": {},"
+			" \"month\": {},"
+			" \"day\": {},"
+			" \"hour\": {},"
+			" \"minute\": {},"
+			" \"second\": {}"
+			" }}",
+			int(ymd.year()),
+			unsigned(ymd.month()),
+			unsigned(ymd.day()),
+			hms.hours().count(),
+			hms.minutes().count(),
+			hms.seconds().count()
+		);
+
+		std::map<std::string, std::string> variables =
+		{
+			{"{{CHANNELS}}", std::to_string(numChannels) },
+			{"{{HEADSCALE}}", std::to_string(weights[weights.size() - 1]) },
+			{"{{DATE}}", dateStr },
+			{"{{WEIGHTS}}", weightStr }
+		};
+
+		std::string jsonOutStr = std::string(A2JsonData);
+
+		for (const auto& [variable, value] : variables)
+		{
+			ReplaceVariable(jsonOutStr, variable, value);
+		}
+
+		std::ofstream namStream(outputNAMPath);
+
+		namStream << jsonOutStr;
+
 	}, modelTrainerObj);
 
 	return 0;

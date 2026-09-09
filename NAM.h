@@ -1,6 +1,8 @@
 #pragma once
 
 #include "ModelTrainer.h"
+#include "Dense.h"
+#include "Conv1D.h"
 
 using namespace cpugrad;
 
@@ -123,6 +125,14 @@ public:
 		conditionMixIn.SetWeights(inWeights);
 		headRechannel.SetWeights(inWeights);
 	}
+
+	void GetWeights(std::vector<float>::iterator& outWeights) override
+	{
+		conv.GetWeights(outWeights);
+		conditionMixIn.GetWeights(outWeights);
+		headRechannel.GetWeights(outWeights);
+	}
+
 
 	void SetTrainingContext(TrainingContextT<T>* context) override
 	{
@@ -295,9 +305,26 @@ public:
 		headRechannel.SetWeights(inWeights);
 	}
 
-	void SetHeadScale(float scale)
+	void GetWeights(std::vector<float>::iterator& outWeights) override
+	{
+		layerArrayRechannel.GetWeights(outWeights);
+
+		ForEachIndex<NumLayers>([&](auto layerIndex)
+			{
+				std::get<layerIndex>(layers).GetWeights(outWeights);
+			});
+
+		headRechannel.GetWeights(outWeights);
+	}
+
+	void SetHeadScale(T scale)
 	{
 		this->headScale = scale;
+	}
+
+	T GetHeadScale()
+	{
+		return this->headScale;
 	}
 
 	void SetTrainingContext(TrainingContextT<T>* context) override

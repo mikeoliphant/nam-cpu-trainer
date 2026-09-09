@@ -33,7 +33,8 @@ add_subdirectory(deps/cpugrad cpugrad)
 
 set(SOURCES
 	NeuralCpuTrainer.cpp
-	NAM.h)
+	NAM.h
+	a2json.h)
 
 add_executable(nam-cpu-trainer ${SOURCES})
 
