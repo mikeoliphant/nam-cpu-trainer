@@ -6,7 +6,8 @@ constexpr std::string_view A2JsonData = R"(
 {
   "version": "0.7.0",
   "metadata": {
-    "date": {{DATE}}
+    "date": {{DATE}},
+    "loudness": {{LOUDNESS}}
   },
   "sample_rate": 48000.0,
   "architecture": "WaveNet",

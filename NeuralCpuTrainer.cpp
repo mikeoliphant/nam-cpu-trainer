@@ -81,8 +81,117 @@ bool EpochCallback(size_t epoch, double loss)
 	return (keepRunning == 1);
 }
 
+std::vector<float> GeneratePinkNoise(size_t numSamples, float targetDbRms = -15.0f)
+{
+	if (numSamples == 0) return std::vector<float>();
+
+	std::vector<float> noise(numSamples);
+
+	// Convert target dB RMS to a linear RMS amplitude value
+	const float targetLinearRms = std::pow(10.0f, targetDbRms / 20.0f);
+
+	// Voss-McCartney algorithm setup (12 octaves)
+	const int numRows = 12;
+	std::vector<float> rows(numRows, 0.0f);
+	float runningSum = 0.0f;
+
+	std::random_device rd;
+	std::mt19937 generator(rd());
+	std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+
+	for (int i = 0; i < numRows; ++i) {
+		rows[i] = dist(generator);
+		runningSum += rows[i];
+	}
+
+	// Phase 1: Generate the raw pink noise and compute the sum for DC offset
+	double sampleSum = 0.0;
+
+	for (size_t i = 0; i < numSamples; ++i)
+	{
+		int rowToUpdate = 0;
+		size_t index = i + 1;
+
+		while ((index & 1) == 0 && rowToUpdate < numRows - 1)
+		{
+			rowToUpdate++;
+			index >>= 1;
+		}
+
+		runningSum -= rows[rowToUpdate];
+		rows[rowToUpdate] = dist(generator);
+		runningSum += rows[rowToUpdate];
+
+		float sample = runningSum + dist(generator);
+		noise[i] = sample;
+		sampleSum += sample;
+	}
+
+	// Phase 2: Remove DC offset (ensures RMS calculation reflects true AC energy)
+	float mean = static_cast<float>(sampleSum / numSamples);
+	double sumSquares = 0.0;
+
+	for (size_t i = 0; i < numSamples; ++i)
+	{
+		noise[i] -= mean;
+		sumSquares += static_cast<double>(noise[i]) * noise[i];
+	}
+
+	// Phase 3: Calculate current RMS and apply the target scaling factor
+	float currentRms = std::sqrt(static_cast<float>(sumSquares / numSamples));
+
+	if (currentRms > 0.0f)
+	{
+		float scaleFactor = targetLinearRms / currentRms;
+
+		for (float& sample : noise)
+		{
+			sample *= scaleFactor;
+		}
+	}
+
+	return noise;
+}
+
+void ReplaceVariable(std::string& str, const std::string& from, const std::string& to)
+{
+	if (from.empty()) return;
+
+	size_t start_pos = 0;
+
+	while ((start_pos = str.find(from, start_pos)) != std::string::npos)
+	{
+		str.replace(start_pos, from.length(), to);
+		start_pos += to.length();
+	}
+}
+
+double LinearToDbAmplitude(double linear)
+{
+	if (linear <= 0.0)
+	{
+		return -INFINITY;
+	}
+
+	return 20.0 * std::log10(linear);
+}
+
+double GetRMSLevel(float* data, size_t numSamples)
+{
+	double sumOfSquares = 0.0;
+
+	for (size_t i = 0; i < numSamples; ++i)
+	{
+		sumOfSquares += static_cast<double>(data[i] * data[i]);
+	}
+
+	double meanSquare = sumOfSquares / static_cast<double>(numSamples);
+
+	return LinearToDbAmplitude(std::sqrt(meanSquare));
+}
+
 template <typename ModelTrainer>
-std::vector<float> TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs)
+void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath)
 {
 	unsigned int channels;
 	unsigned int sampleRate;
@@ -117,11 +226,74 @@ std::vector<float> TrainNAM(ModelTrainer& trainer, const std::filesystem::path i
 
 	std::cout << std::endl << "Best ESR: " << std::format("{:.8f}", bestLoss) << std::endl;
 
-	return weights;
+	size_t receptiveField = trainer.GetModel().GetReceptiveField();
+
+	std::vector<float> noise = GeneratePinkNoise(48000);
+	noise.insert(noise.begin(), receptiveField, 0.0f);
+
+	std::vector<float> noiseOutput(noise.size());
+
+	trainer.VerifyModel(noise.data(), noiseOutput.data(), noise.size());
+
+	double loudnessRMS = GetRMSLevel(noiseOutput.data() + receptiveField, noiseOutput.size() - receptiveField);
+
+	std::cout << "Output RMS on -15dB input (\"loudness\"): " << loudnessRMS << std::endl;
+
+	std::string weightStr;
+
+	for (size_t i = 0; i < weights.size(); ++i) {
+		std::format_to(std::back_inserter(weightStr), "{:.9g}", weights[i]);
+
+		if (i < weights.size() - 1) {
+			weightStr += ", ";
+		}
+	}
+
+	auto now = std::chrono::system_clock::now();
+	auto system_days = std::chrono::floor<std::chrono::days>(now);
+	std::chrono::year_month_day ymd{ system_days };
+	std::chrono::hh_mm_ss hms{ std::chrono::floor<std::chrono::seconds>(now - system_days) };
+
+	std::string dateStr = std::format(
+		"{{ "
+		" \"year\": {},"
+		" \"month\": {},"
+		" \"day\": {},"
+		" \"hour\": {},"
+		" \"minute\": {},"
+		" \"second\": {}"
+		" }}",
+		int(ymd.year()),
+		unsigned(ymd.month()),
+		unsigned(ymd.day()),
+		hms.hours().count(),
+		hms.minutes().count(),
+		hms.seconds().count()
+	);
+
+	std::map<std::string, std::string> variables =
+	{
+		{"{{CHANNELS}}", std::to_string(numChannels) },
+		{"{{HEADSCALE}}", std::to_string(weights[weights.size() - 1]) },
+		{"{{DATE}}", dateStr },
+		{"{{LOUDNESS}}", std::to_string(loudnessRMS) },
+		{"{{WEIGHTS}}", weightStr }
+	};
+
+	std::string jsonOutStr = std::string(A2JsonData);
+
+	for (const auto& [variable, value] : variables)
+	{
+		ReplaceVariable(jsonOutStr, variable, value);
+	}
+
+	std::ofstream namStream(outputNAMPath);
+
+	namStream << jsonOutStr;
 }
 
 // Keeps the compiler happy
-std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs)
+std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath)
 {
 	return std::vector<float>();
 }
@@ -152,18 +324,6 @@ A2Types GetTrainer(size_t numChannels, size_t numThreads)
 	return nullptr;
 }
 
-void ReplaceVariable(std::string& str, const std::string& from, const std::string& to)
-{
-	if (from.empty()) return;
-
-	size_t start_pos = 0;
-
-	while ((start_pos = str.find(from, start_pos)) != std::string::npos)
-	{
-		str.replace(start_pos, from.length(), to);
-		start_pos += to.length();
-	}
-}
 
 int main(int argc, char* argv[])
 {	
@@ -265,58 +425,7 @@ int main(int argc, char* argv[])
 
 		//TrainNAM(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
 
-		std::vector<float> weights = TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs);
-
-		std::string weightStr;
-
-		for (size_t i = 0; i < weights.size(); ++i) {
-			std::format_to(std::back_inserter(weightStr), "{:.9g}", weights[i]);
-
-			if (i < weights.size() - 1) {
-				weightStr += ", ";
-			}
-		}
-
-		auto now = std::chrono::system_clock::now();
-		auto system_days = std::chrono::floor<std::chrono::days>(now);
-		std::chrono::year_month_day ymd{ system_days };
-		std::chrono::hh_mm_ss hms{ std::chrono::floor<std::chrono::seconds>(now - system_days) };
-
-		std::string dateStr = std::format(
-			"{{ "
-			" \"year\": {},"
-			" \"month\": {},"
-			" \"day\": {},"
-			" \"hour\": {},"
-			" \"minute\": {},"
-			" \"second\": {}"
-			" }}",
-			int(ymd.year()),
-			unsigned(ymd.month()),
-			unsigned(ymd.day()),
-			hms.hours().count(),
-			hms.minutes().count(),
-			hms.seconds().count()
-		);
-
-		std::map<std::string, std::string> variables =
-		{
-			{"{{CHANNELS}}", std::to_string(numChannels) },
-			{"{{HEADSCALE}}", std::to_string(weights[weights.size() - 1]) },
-			{"{{DATE}}", dateStr },
-			{"{{WEIGHTS}}", weightStr }
-		};
-
-		std::string jsonOutStr = std::string(A2JsonData);
-
-		for (const auto& [variable, value] : variables)
-		{
-			ReplaceVariable(jsonOutStr, variable, value);
-		}
-
-		std::ofstream namStream(outputNAMPath);
-
-		namStream << jsonOutStr;
+		TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs, numChannels, outputNAMPath);
 
 	}, modelTrainerObj);
 
