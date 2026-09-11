@@ -23,8 +23,10 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
 	add_compile_options(/arch:AVX2 /fp:fast)
 	message(STATUS "Enabling /arch:AVX2")		 
 else()
-	add_compile_options(-march=x86-64-v3)
-	message(STATUS "Enabling -march=x86-64-v3")
+	set(TARGET_ARCH "native" CACHE STRING "Target architecture for optimization (e.g., native, x86-64-v3)")
+
+	add_compile_options("-march=${TARGET_ARCH}")
+	message(STATUS "Enabling -march=${TARGET_ARCH}")
 endif()
 
 set(BUILD_NAMCORE OFF CACHE BOOL "") 
