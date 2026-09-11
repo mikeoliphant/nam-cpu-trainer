@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+  
+jobs:
+  create_release:
+    name: Create release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{steps.create_release.outputs.upload_url}}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        with:
+          draft: true
+          tag_name: ${{github.ref}}
+          release_name: Release ${{github.ref}}
+
+  build-linux-x64:
+    name: Build Linux x64
+    needs: create_release
+    runs-on: ubuntu-latest
+    env:
+      ARCHIVE_NAME: nam-cpu-trainer-linux-x64v3.tgz
+    steps:
+    - uses: actions/checkout@v3.3.0
+      with:
+        submodules: recursive
+
+    - name: Setup Clang
+      uses: egor-tensin/setup-clang@v2
+      with:
+        version: '22'
+    
+    - name: Build Plugin
+      working-directory: ${{github.workspace}}/build
+      env:
+        CXX: clang++
+        CXXFLAGS: "-static-libstdc++ -static-libgcc"
+      run: |
+        cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DTARGET_ARCH=x86-64-v3
+        cmake --build . --config $BUILD_TYPE -j4
+
+    - name: Add Archive
+      working-directory: ${{github.workspace}}/build
+      run: tar -czf ${{ env.ARCHIVE_NAME }} nam-cpu-trainer
+      
+    - name: Upload Plugin Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create_release.outputs.upload_url }}
+        asset_path: ./build/${{ env.ARCHIVE_NAME }}
+        asset_name: ${{ env.ARCHIVE_NAME }}
+        asset_content_type: application/tgz
+
+  build-windows:
+    name: Build Windows
+    needs: create_release
+    runs-on: windows-latest
+    env:
+      ARCHIVE_NAME: nam-cpu-trainer-win-x64v3.zip
+    steps:
+    - uses: actions/checkout@v3.3.0
+      with:
+        submodules: recursive
+    
+    - name: Build Plugin
+      working-directory: ${{github.workspace}}/build
+      run: |
+        cmake.exe -G "Visual Studio 18 2026" -A x64  -T ClangCL -DTARGET_ARCH=x86-64-v3 ..
+        cmake --build . --config=release -j4
+
+    - name: Add Archive
+      run: Compress-Archive -Path ${{github.workspace}}\build\nam-cpu-trainer.exe -Destination ${{ env.ARCHIVE_NAME }}
+      
+    - name: Upload Plugin Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create_release.outputs.upload_url }}
+        asset_path: ./${{ env.ARCHIVE_NAME }}
+        asset_name: ${{ env.ARCHIVE_NAME }}
+        asset_content_type: application/zip
