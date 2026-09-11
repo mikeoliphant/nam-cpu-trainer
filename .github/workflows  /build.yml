@@ -1,0 +1,43 @@
+name: Build
+
+on:
+  [workflow_dispatch, push, pull_request]
+
+env:
+  BUILD_TYPE: Release
+  
+jobs:
+  build-ubuntu:
+    name: Build Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3.3.0
+      with:
+        submodules: recursive
+
+    - name: Setup GCC 15
+      uses: egor-tensin/setup-gcc@v2
+      with:
+        version: '15'
+    
+    - name: Build Plugin
+      working-directory: ${{github.workspace}}/build
+      env:
+        CXX: g++-15   
+      run: |
+        cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+        cmake --build . --config $BUILD_TYPE -j4
+        
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v3.3.0
+      with:
+        submodules: recursive
+    
+    - name: Build Plugin
+      working-directory: ${{github.workspace}}/build
+      run: |
+        cmake.exe -G "Visual Studio 18 2026" -A x64 ..
+        cmake --build . --config=release -j4
