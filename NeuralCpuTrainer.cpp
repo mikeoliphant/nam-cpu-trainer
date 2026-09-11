@@ -6,7 +6,6 @@
 #include <csignal>
 #include <filesystem>
 #include <fstream>
-#include <xmmintrin.h>
 
 #include "NeuralModel.h"
 #define DR_WAV_IMPLEMENTATION
@@ -104,7 +103,7 @@ std::vector<float> GeneratePinkNoise(size_t numSamples, float targetDbRms = -15.
 		runningSum += rows[i];
 	}
 
-	// Phase 1: Generate the raw pink noise and compute the sum for DC offset
+	// Generate raw pink noise and compute the sum for DC offset
 	double sampleSum = 0.0;
 
 	for (size_t i = 0; i < numSamples; ++i)
@@ -127,7 +126,7 @@ std::vector<float> GeneratePinkNoise(size_t numSamples, float targetDbRms = -15.
 		sampleSum += sample;
 	}
 
-	// Phase 2: Remove DC offset (ensures RMS calculation reflects true AC energy)
+	// Remove DC offset (ensures RMS calculation reflects true AC energy)
 	float mean = static_cast<float>(sampleSum / numSamples);
 	double sumSquares = 0.0;
 
@@ -137,7 +136,7 @@ std::vector<float> GeneratePinkNoise(size_t numSamples, float targetDbRms = -15.
 		sumSquares += static_cast<double>(noise[i]) * noise[i];
 	}
 
-	// Phase 3: Calculate current RMS and apply the target scaling factor
+	// Calculate current RMS and apply the target scaling factor
 	float currentRms = std::sqrt(static_cast<float>(sumSquares / numSamples));
 
 	if (currentRms > 0.0f)
@@ -387,10 +386,6 @@ int main(int argc, char* argv[])
 	std::filesystem::path outputNAMPath = capturePath;
 	outputNAMPath.replace_extension(".nam");
 	
-	_MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
-	_MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
-
-
 	std::cout << std::endl << "nam-cpu-trainer v" << NCT_VERSION_STRING << std::endl;
 	std::cout << "Copyright 2026 Mike Oliphant (https://github.com/mikeoliphant/nam-cpu-trainer)" << std::endl << std::endl;
 
