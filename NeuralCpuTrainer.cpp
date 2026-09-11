@@ -71,7 +71,7 @@ void SignalHandler(int sigNum)
 	{
 		std::signal(sigNum, SIG_DFL);
 		
-		std::cout << std::endl << "Aborting after next epoch. Press ctl-c again to force exit." << std::endl;
+		std::cout << std::endl << "Stopping after next epoch. Press ctl-c again to force immediate exit (model will not be saved)." << std::endl;
 
 		keepRunning = 0; // Set flag to break the loop
 	}
