@@ -2,7 +2,7 @@
 
 nam-cpu-trainer is a single-executable [neural-amp-modeler](https://github.com/sdatkinson/neural-amp-modeler) trainer with no external dependencies.
 
-It is purely CPU-based - no graphics card is needed. It uses a high-performance, highly portable training based on [cpugrad](https://github.com/mikeoliphant/cpugrad).
+It is purely CPU-based - no graphics card is needed. It uses a high-performance, highly portable training implementation based on [cpugrad](https://github.com/mikeoliphant/cpugrad).
 
 # Usage
 
