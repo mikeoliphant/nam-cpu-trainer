@@ -20,7 +20,7 @@ jobs:
       with:
         version: '15'
     
-    - name: Build Plugin
+    - name: Build
       working-directory: ${{github.workspace}}/build
       env:
         CXX: g++-15   
@@ -36,7 +36,7 @@ jobs:
       with:
         submodules: recursive
     
-    - name: Build Plugin
+    - name: Build
       working-directory: ${{github.workspace}}/build
       run: |
         cmake.exe -G "Visual Studio 18 2026" -A x64 ..
