@@ -31,7 +31,7 @@ It currently is designed for "input.wav" to be the default v3 NAM/Tone3000 sweep
 
 Model "loudness" values are calculated and included in the output model.
 
-Current differences/limitations with respect to the standard python nam trainer:
+Current differences/limitations with respect to the standard python NAM trainer:
 
 - training loss is currently pre-emphasized MSE, rather than a combination of MSE and MR-STFT
 - no "gain" value is added to the model
@@ -39,7 +39,7 @@ Current differences/limitations with respect to the standard python nam trainer:
 
 # Performance
 
-Performance optimization is still very much in progress, but it is already *much* better than trying to run the standard python trainer on CPU.
+Performance optimization is still very much in progress, but it is already *much* better than trying to run the standard python trainer on CPU. In fact, performance stacks up very well against GPU training performance.
 
 For example, my Ryzen 7 5700X CPU with 3200MHz RAM trains A2 "lite" models at ~2 seconds per epoch, and A2 "full" models at ~5 seconds per epoch.
 
