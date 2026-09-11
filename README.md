@@ -34,6 +34,7 @@ Model "loudness" values are calculated and included in the output model.
 Current differences/limitations with respect to the standard python NAM trainer:
 
 - training loss is currently pre-emphasized MSE, rather than a combination of MSE and MR-STFT
+- no auto-alignment is currently done for the input/output files
 - no "gain" value is added to the model
 - "packed" A2 (lite/full) is not currently supported
 
