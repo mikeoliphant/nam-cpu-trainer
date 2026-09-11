@@ -65,10 +65,12 @@ static void TestNAM(std::filesystem::path modelPath)
 
 volatile sig_atomic_t keepRunning = 1;
 
-void SignalHandler(int signal_num)
+void SignalHandler(int sigNum)
 {
-	if (signal_num == SIGINT)
+	if (sigNum == SIGINT)
 	{
+		std::signal(sigNum, SIG_DFL);
+		
 		std::cout << std::endl << "Aborting after next epoch. Press ctl-c again to force exit." << std::endl;
 
 		keepRunning = 0; // Set flag to break the loop
