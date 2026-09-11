@@ -19,7 +19,7 @@ Optional arguments:
   -e, --epochs <maxEpochs>      Maximum number of epochs to train for [default: 1000]
 ```
 
-When training concludes, the result .nam file will be the same path/name as "output.wav", but with a .nam extension.
+When training concludes, the resulting .nam file will be the same path/name as "output.wav", but with a .nam extension.
 
 To end training early, hit "Ctrl-C". This will stop training after the current epoch ends. Hitting "Ctrl-C" again will immediately abort training - but will not create a model.
 
