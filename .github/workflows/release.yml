@@ -85,7 +85,7 @@ jobs:
         cmake --build . --config=release -j4
 
     - name: Add Archive
-      run: Compress-Archive -Path ${{github.workspace}}\build\nam-cpu-trainer.exe -Destination ${{ env.ARCHIVE_NAME }}
+      run: Compress-Archive -Path ${{github.workspace}}\build\Release\nam-cpu-trainer.exe -Destination ${{ env.ARCHIVE_NAME }}
       
     - name: Upload Plugin Asset
       uses: actions/upload-release-asset@v1
