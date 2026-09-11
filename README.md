@@ -37,6 +37,8 @@ Current differences/limitations with respect to the standard python NAM trainer:
 - no "gain" value is added to the model
 - "packed" A2 (lite/full) is not currently supported
 
+Given these limitations (particularly the lack of MR-STFT training loss), I consider this project to be in an experimental stage at this point.
+
 # Performance
 
 Performance optimization is still very much in progress, but it is already *much* better than trying to run the standard python trainer on CPU. In fact, performance stacks up very well against GPU training performance.
