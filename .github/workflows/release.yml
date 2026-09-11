@@ -44,7 +44,7 @@ jobs:
       with:
         version: '22'
     
-    - name: Build Plugin
+    - name: Build
       working-directory: ${{github.workspace}}/build
       env:
         CXX: clang++
@@ -78,7 +78,7 @@ jobs:
       with:
         submodules: recursive
     
-    - name: Build Plugin
+    - name: Build
       working-directory: ${{github.workspace}}/build
       run: |
         cmake.exe -G "Visual Studio 18 2026" -A x64  -T ClangCL -DTARGET_ARCH=x86-64-v3 ..
