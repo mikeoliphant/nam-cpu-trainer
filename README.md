@@ -21,7 +21,9 @@ Optional arguments:
 
 When training concludes, the resulting .nam file will be the same path/name as "output.wav", but with a .nam extension.
 
-To end training early, hit "Ctrl-C". This will stop training after the current epoch ends. Hitting "Ctrl-C" again will immediately abort training - but will not create a model.
+If an epoch has a new low ESR, you will see a "*" at the end of the line. This means that weights have been stored for this epoch, and it will be used to produce the model unless a better epoch comes later.
+
+To end training early while still producing a model, hit "Ctrl-C". This will stop training after the current epoch ends. Hitting "Ctrl-C" again will immediately abort training - but will **not** create a model.
 
 ## Functionality
 
