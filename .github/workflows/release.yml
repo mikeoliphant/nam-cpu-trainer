@@ -96,3 +96,36 @@ jobs:
         asset_path: ./${{ env.ARCHIVE_NAME }}
         asset_name: ${{ env.ARCHIVE_NAME }}
         asset_content_type: application/zip
+
+  build-mac-arm64:
+    name: Build Mac arm64
+    needs: create_release
+    runs-on: macos-latest
+    env:
+      ARCHIVE_NAME: nam-cpu-trainer-mac-arm64.tgz
+    steps:
+    - uses: actions/checkout@v3.3.0
+      with:
+        submodules: recursive
+        
+    - name: Build
+      working-directory: ${{github.workspace}}/build
+      env:
+        CXX: clang++
+      run: |
+        cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_OSX_ARCHITECTURES="arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0"
+        cmake --build . --config $BUILD_TYPE -j4
+
+    - name: Add Archive
+      working-directory: ${{github.workspace}}/build
+      run: tar -czf ${{ env.ARCHIVE_NAME }} nam-cpu-trainer
+      
+    - name: Upload Plugin Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create_release.outputs.upload_url }}
+        asset_path: ./build/${{ env.ARCHIVE_NAME }}
+        asset_name: ${{ env.ARCHIVE_NAME }}
+        asset_content_type: application/tgz
