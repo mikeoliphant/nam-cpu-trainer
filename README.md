@@ -82,7 +82,7 @@ cmake --build . --config=release -j4
 
 Note - you'll have to change the Visual Studio version if you are using a different one. Also note that instead of "cmake --build", you can just load the .slnx file into Visual Studio and build it there.
 
-Performance can be highly dependent on compiler. In my experience, the best performance can be had with recent versions of clang++.
+Performance can be highly dependent on compiler. In my experience, the **best performance can be had with recent versions of clang++**.
 
 To use clang on Windows, make sure you have the relevant packages installed using the Visual Studio installer, then add " -T ClangCL" to your CMake commandline.
 
