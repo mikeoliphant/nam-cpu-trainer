@@ -6,6 +6,9 @@ It is purely CPU-based - no graphics card is needed. It uses a high-performance,
 
 ## Usage
 
+Binaries for Windows x64 and Linux x64 can be downloaded from the [Releases](https://github.com/mikeoliphant/nam-cpu-trainer/releases) section. Note that these binaries require a *reasonably* modern
+CPU that supports the AVX2 instruction set.
+
 ```
 nam-cpu-trainer [--help] [--version] --input <input.wav> --output <output.wav> [--channels <numChannels>] [--threads <numThreads>] [--epochs <maxEpochs>]
 
