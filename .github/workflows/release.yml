@@ -113,7 +113,7 @@ jobs:
       env:
         CXX: clang++
       run: |
-        cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_OSX_ARCHITECTURES="arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET="13.3"
+        cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_OSX_ARCHITECTURES="arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET="13.3" -DTARGET_ARCH=apple-m1
         cmake --build . --config $BUILD_TYPE -j4
 
     - name: Add Archive
