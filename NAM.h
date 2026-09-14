@@ -293,6 +293,11 @@ public:
 		return numWeights + headRechannel.GetNumWeights() + layerArrayRechannel.GetNumWeights();
 	}
 
+	size_t GetMaxScratchBufferSize(size_t inputBufferSize) override
+	{
+		return Channels * (inputBufferSize + GetReceptiveField());
+	}
+
 	void SetWeights(std::vector<float>::iterator& inWeights) override
 	{
 		layerArrayRechannel.SetWeights(inWeights);
