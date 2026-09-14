@@ -39,7 +39,7 @@ public:
 		headOutputMap.noalias() += reluOut.Slice(numSamplesOut - headOutputSamples, headOutputSamples).GetEigenMapConst();
 
 		// Not needed on last layer - can optimize
-		headRechannel.Forward(reluOut, output);	
+		oneByOne.Forward(reluOut, output);	
 
 		auto outputMap = output.GetEigenMap();
 		size_t inputOffset = input.GetNumCols() - numSamplesOut;
@@ -61,7 +61,7 @@ public:
 
 		auto scratch = trainingContext->GetBufferArena().template GetScratchBuffer<Channels>(numSamplesOut);
 
-		headRechannel.Backward(reluOut, dOutput, scratch);
+		oneByOne.Backward(reluOut, dOutput, scratch);
 
 		const size_t headOutputSize = dHeadOutput.GetNumCols();	// dHeadOutput is always smaller
 		auto dOneByOneOutMap = scratch.Slice(numSamplesOut - headOutputSize, headOutputSize).GetEigenMap();
@@ -109,13 +109,13 @@ public:
 
 	size_t GetNumWeights() override
 	{
-		return conv.GetNumWeights() + headRechannel.GetNumWeights() + conditionMixIn.GetNumWeights();;
+		return conv.GetNumWeights() + oneByOne.GetNumWeights() + conditionMixIn.GetNumWeights();;
 	}
 
 	void RandomizeWeights() override
 	{
 		conv.RandomizeWeights();
-		headRechannel.RandomizeWeights();
+		oneByOne.RandomizeWeights();
 		conditionMixIn.RandomizeWeights();
 	}
 
@@ -123,14 +123,14 @@ public:
 	{
 		conv.SetWeights(inWeights);
 		conditionMixIn.SetWeights(inWeights);
-		headRechannel.SetWeights(inWeights);
+		oneByOne.SetWeights(inWeights);
 	}
 
 	void GetWeights(std::vector<float>::iterator& outWeights) override
 	{
 		conv.GetWeights(outWeights);
 		conditionMixIn.GetWeights(outWeights);
-		headRechannel.GetWeights(outWeights);
+		oneByOne.GetWeights(outWeights);
 	}
 
 
@@ -140,7 +140,7 @@ public:
 
 		conv.SetTrainingContext(context);
 		conditionMixIn.SetTrainingContext(context);
-		headRechannel.SetTrainingContext(context);
+		oneByOne.SetTrainingContext(context);
 	}
 
 private:
@@ -149,7 +149,7 @@ private:
 	DenseBackpropT<T, ConditionSize, Channels, false> conditionMixIn;
 	LeakyReLUT<T, Channels> relu;
 	ChannelBufferDynamic<T, Channels> reluOut;
-	DenseBackpropT<T, Channels, Channels, true> headRechannel;
+	DenseBackpropT<T, Channels, Channels, true> oneByOne;
 };
 
 template <typename T, int InOutChannels, int Channels, typename KernelSizeSequence, typename DilationsSequence>
@@ -211,7 +211,7 @@ public:
 				}
 			});
 
-		headRechannel.Forward(headOutput, output);
+		oneByOne.Forward(headOutput, output);
 
 		auto outputMap = output.GetEigenMap();
 		outputMap *= headScale;
@@ -224,13 +224,13 @@ public:
 		auto dOutputMap = dOutput.GetEigenMap();
 		dOutputMap *= headScale;
 
-		currentSize += headRechannel.GetReceptiveField();
+		currentSize += oneByOne.GetReceptiveField();
 
 		if (dHeadRechannelOut.GetNumCols() == 0)
 			dHeadRechannelOut = trainingContext->GetBufferArena().template GetBuffer<Channels>(currentSize);
 
 		dHeadRechannelOut.SetZero();
-		headRechannel.Backward(headOutput, dOutput, dHeadRechannelOut);
+		oneByOne.Backward(headOutput, dOutput, dHeadRechannelOut);
 
 		ChannelBufferDynamic<T, Channels> dLastLayerOut;
 		ChannelBufferDynamic<T, Channels> dTmpLayerOut;
@@ -278,7 +278,7 @@ public:
 				fieldSize += std::get<layerIndex>(layers).GetReceptiveField();
 			});
 
-		return fieldSize + headRechannel.GetReceptiveField();
+		return fieldSize + oneByOne.GetReceptiveField();
 	}
 
 	size_t GetNumWeights() override
@@ -290,7 +290,7 @@ public:
 				numWeights += std::get<layerIndex>(layers).GetNumWeights();
 			});
 
-		return numWeights + headRechannel.GetNumWeights() + layerArrayRechannel.GetNumWeights();
+		return numWeights + oneByOne.GetNumWeights() + layerArrayRechannel.GetNumWeights();
 	}
 
 	size_t GetMaxScratchBufferSize(size_t inputBufferSize) override
@@ -307,7 +307,7 @@ public:
 				std::get<layerIndex>(layers).SetWeights(inWeights);
 			});
 
-		headRechannel.SetWeights(inWeights);
+		oneByOne.SetWeights(inWeights);
 	}
 
 	void GetWeights(std::vector<float>::iterator& outWeights) override
@@ -319,7 +319,7 @@ public:
 				std::get<layerIndex>(layers).GetWeights(outWeights);
 			});
 
-		headRechannel.GetWeights(outWeights);
+		oneByOne.GetWeights(outWeights);
 	}
 
 	void SetHeadScale(T scale)
@@ -342,7 +342,7 @@ public:
 				std::get<layerIndex>(layers).SetTrainingContext(context);
 			});
 
-		headRechannel.SetTrainingContext(context);
+		oneByOne.SetTrainingContext(context);
 	}
 
 	void RandomizeWeights() override
@@ -354,7 +354,7 @@ public:
 				std::get<layerIndex>(layers).RandomizeWeights();
 			});
 
-		headRechannel.RandomizeWeights();
+		oneByOne.RandomizeWeights();
 	}
 
 private:
@@ -364,7 +364,7 @@ private:
 	ChannelBufferDynamic<T, Channels> layerOuts[NumLayers];
 
 	ChannelBufferDynamic<T, Channels> headOutput;
-	Conv1DBackpropT<T, Channels, InOutChannels, 16, true, 1> headRechannel;
+	Conv1DBackpropT<T, Channels, InOutChannels, 16, true, 1> oneByOne;
 	ChannelBufferDynamic<T, Channels> dHeadRechannelOut;
 	float headScale = 0.1f;
 };
