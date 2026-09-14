@@ -232,41 +232,45 @@ public:
 		dHeadRechannelOut.SetZero();
 		oneByOne.Backward(headOutput, dOutput, dHeadRechannelOut);
 
-		ChannelBufferDynamic<T, Channels> dLastLayerOut;
+		ChannelBufferDynamic<T, Channels> dLastLayerOut = trainingContext->GetBufferArena().template GetBuffer<Channels>(input.GetNumCols());
+		ChannelBufferDynamic<T, Channels> dCurrentLayerOut = trainingContext->GetBufferArena().template GetBuffer<Channels>(input.GetNumCols());
 		ChannelBufferDynamic<T, Channels> dTmpLayerOut;
+
+		size_t lastLayerSize = currentSize;
 
 		ForEachIndex<NumLayers>([&](auto layerIndexForward)
 			{
 				constexpr auto layerIndexBackward = NumLayers - 1 - layerIndexForward;
 
 				currentSize += std::get<layerIndexBackward>(layers).GetReceptiveField();
-				auto dCurrentLayerOut = trainingContext->GetBufferArena().template GetScratchBuffer<Channels>(currentSize);
 
 				if constexpr (layerIndexForward == 0)
 				{
-					std::get<layerIndexBackward>(layers).BackwardNoLayerOutput(layerOuts[layerIndexBackward - 1], input, dHeadRechannelOut,	dCurrentLayerOut);
+					std::get<layerIndexBackward>(layers).BackwardNoLayerOutput(layerOuts[layerIndexBackward - 1], input, dHeadRechannelOut,	dCurrentLayerOut.Slice(currentSize));
 				}
 				else if constexpr (layerIndexBackward > 0)
 				{
-					std::get<layerIndexBackward>(layers).Backward(layerOuts[layerIndexBackward - 1], input,	dLastLayerOut, dHeadRechannelOut, dCurrentLayerOut);
+					std::get<layerIndexBackward>(layers).Backward(layerOuts[layerIndexBackward - 1], input,	dLastLayerOut.Slice(lastLayerSize), dHeadRechannelOut, dCurrentLayerOut.Slice(currentSize));
 				}
 				else
 				{
-					std::get<layerIndexBackward>(layers).Backward(layerArrayRechannelOut, input, dLastLayerOut, dHeadRechannelOut, dCurrentLayerOut);
+					std::get<layerIndexBackward>(layers).Backward(layerArrayRechannelOut, input, dLastLayerOut.Slice(lastLayerSize), dHeadRechannelOut, dCurrentLayerOut.Slice(currentSize));
 				}
 
 				dTmpLayerOut = dLastLayerOut;
 				dLastLayerOut = dCurrentLayerOut;
+				dCurrentLayerOut = dTmpLayerOut;
+				lastLayerSize = currentSize;
 
-				if (dTmpLayerOut.GetNumCols() != 0)
-				{
-					trainingContext->GetBufferArena().FreeScratchBuffer(dTmpLayerOut);
-				}
+				//if (dTmpLayerOut.GetNumCols() != 0)
+				//{
+				//	trainingContext->GetBufferArena().FreeScratchBuffer(dTmpLayerOut);
+				//}
 			});
 
 		layerArrayRechannel.BackwardNoDInput(input, dLastLayerOut);	// skip dInput gradient calculation since it isn't used
 
-		trainingContext->GetBufferArena().FreeScratchBuffer(dLastLayerOut);
+		//trainingContext->GetBufferArena().FreeScratchBuffer(dLastLayerOut);
 	}
 
 	size_t GetReceptiveField() override
