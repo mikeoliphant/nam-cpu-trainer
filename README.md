@@ -10,7 +10,7 @@ Pre-built binaries for Windows x64, Linux x64 and Mac Arm64 can be downloaded fr
 CPU that supports the AVX2 instruction set. The Mac binary is only for Arm64 (not intel) Macs and will likely require some fiddling to let Apple's security let you run it.
 
 ```
-nam-cpu-trainer [--help] [--version] --input <input.wav> --output <output.wav> [--channels <numChannels>] [--threads <numThreads>] [--epochs <maxEpochs>]
+Usage: nam-cpu-trainer [--help] [--version] --input <input.wav> --output <output.wav> [--channels <numChannels>] [--threads <numThreads>] [--epochs <maxEpochs>] [--rand <randomSeed>]
 
 Optional arguments:
   -h, --help                    shows help message and exits
@@ -20,6 +20,7 @@ Optional arguments:
   -c, --channels <numChannels>  Number of channels [default: 3]
   -t, --threads <numThreads>    Number of threads (defaults to detected # cores)
   -e, --epochs <maxEpochs>      Maximum number of epochs to train for [default: 1000]
+  -r, --rand <randomSeed>       Random seed for repeatability (by default a random value is used)
 ```
 
 When training concludes, the resulting .nam file will be the same path/name as "output.wav", but with a .nam extension.
