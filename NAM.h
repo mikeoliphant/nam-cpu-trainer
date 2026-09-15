@@ -219,6 +219,8 @@ public:
 
 	void Backward(const ChannelRowSpan<T, InOutChannels>& input, const ChannelRowSpan<T, InOutChannels>& dOutput, const ChannelRowSpan<T, InOutChannels>& dInput) override
 	{
+		(void)dInput;
+
 		size_t currentSize = dOutput.GetNumCols();
 
 		auto dOutputMap = dOutput.GetEigenMap();

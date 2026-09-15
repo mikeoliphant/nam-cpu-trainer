@@ -79,6 +79,9 @@ void SignalHandler(int sigNum)
 
 bool EpochCallback(size_t epoch, double loss)
 {
+	(void)epoch;
+	(void)loss;
+
 	return (keepRunning == 1);
 }
 
@@ -296,6 +299,13 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 // Keeps the compiler happy
 std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath)
 {
+	(void)trainer;
+	(void)inWavePath;
+	(void)targetWavePath;
+	(void)maxEpochs;
+	(void)numChannels;
+	(void)outputNAMPath;
+
 	return std::vector<float>();
 }
 
