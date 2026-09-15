@@ -6,8 +6,8 @@ It is purely CPU-based - no graphics card is needed. It uses a high-performance,
 
 ## Usage
 
-Binaries for Windows x64 and Linux x64 can be downloaded from the [Releases](https://github.com/mikeoliphant/nam-cpu-trainer/releases) section. Note that these binaries require a *reasonably* modern
-CPU that supports the AVX2 instruction set.
+Pre-built binaries for Windows x64, Linux x64 and Mac Arm64 can be downloaded from the [Releases](https://github.com/mikeoliphant/nam-cpu-trainer/releases) section. Note that the x64 binaries require a *reasonably* modern
+CPU that supports the AVX2 instruction set. The Mac binary is only for Arm64 (not intel) Macs and will likely require some fiddling to let Apple's security let you run it.
 
 ```
 nam-cpu-trainer [--help] [--version] --input <input.wav> --output <output.wav> [--channels <numChannels>] [--threads <numThreads>] [--epochs <maxEpochs>]
@@ -49,7 +49,7 @@ Given these limitations (particularly the lack of MR-STFT training loss), I cons
 
 Performance optimization is still very much in progress, but it is already *much* better than trying to run the standard python trainer on CPU. In fact, performance stacks up very well against GPU training performance.
 
-For example, my Ryzen 7 5700X CPU with 3200MHz RAM trains **A2 "lite"** models at **~2 seconds** per epoch, and **A2 "full"** models at **~5 seconds** per epoch.
+For example, my Ryzen 7 5700X CPU with 3200MHz RAM trains **A2 "lite"** models at **~1.5 seconds** per epoch, and **A2 "full"** models at **~5 seconds** per epoch.
 
 Performance depends highly on the following factors:
 
