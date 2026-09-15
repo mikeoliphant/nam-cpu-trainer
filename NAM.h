@@ -112,11 +112,11 @@ public:
 		return conv.GetNumWeights() + oneByOne.GetNumWeights() + conditionMixIn.GetNumWeights();;
 	}
 
-	void RandomizeWeights() override
+	void RandomizeWeights(std::mt19937& rand) override
 	{
-		conv.RandomizeWeights();
-		oneByOne.RandomizeWeights();
-		conditionMixIn.RandomizeWeights();
+		conv.RandomizeWeights(rand);
+		oneByOne.RandomizeWeights(rand);
+		conditionMixIn.RandomizeWeights(rand);
 	}
 
 	void SetWeights(std::vector<float>::iterator& inWeights) override
@@ -349,16 +349,16 @@ public:
 		oneByOne.SetTrainingContext(context);
 	}
 
-	void RandomizeWeights() override
+	void RandomizeWeights(std::mt19937& rand) override
 	{
-		layerArrayRechannel.RandomizeWeights();
+		layerArrayRechannel.RandomizeWeights(rand);
 
 		ForEachIndex<NumLayers>([&](auto layerIndex)
 			{
-				std::get<layerIndex>(layers).RandomizeWeights();
+				std::get<layerIndex>(layers).RandomizeWeights(rand);
 			});
 
-		oneByOne.RandomizeWeights();
+		oneByOne.RandomizeWeights(rand);
 	}
 
 private:

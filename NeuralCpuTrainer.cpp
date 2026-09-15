@@ -304,22 +304,22 @@ using A2Backprop = ModelTrainerT<float, A2BackpropT<float, 1, Channels, A2Kernel
 
 using A2Types = std::variant<std::nullptr_t, A2Backprop<1>, A2Backprop<2>, A2Backprop<3>, A2Backprop<4>, A2Backprop<8>, A2Backprop<16>>;
 
-A2Types GetTrainer(size_t numChannels, size_t numThreads)
+A2Types GetTrainer(size_t numChannels, size_t numThreads, std::mt19937& rand)
 {
 	switch (numChannels)
 	{
 		case 1:
-			return A2Backprop<1>(numThreads);
+			return A2Backprop<1>(numThreads, rand);
 		case 2:
-			return A2Backprop<2>(numThreads);
+			return A2Backprop<2>(numThreads, rand);
 		case 3:
-			return A2Backprop<3>(numThreads);
+			return A2Backprop<3>(numThreads, rand);
 		case 4:
-			return A2Backprop<4>(numThreads);
+			return A2Backprop<4>(numThreads, rand);
 		case 8:
-			return A2Backprop<8>(numThreads);
+			return A2Backprop<8>(numThreads, rand);
 		case 16:
-			return A2Backprop<16>(numThreads);
+			return A2Backprop<16>(numThreads, rand);
 	}
 
 	return nullptr;
@@ -362,6 +362,12 @@ int main(int argc, char* argv[])
 		.help("Maximum number of epochs to train for")
 		.scan<'i', int>();
 
+	program.add_argument("-r", "--rand")
+		.nargs(1, 1)
+		.metavar("<randomSeed>")
+		.help("Random seed for repeatability (by default a random value is used)")
+		.scan<'i', int>();
+
 	try
 	{
 		program.parse_args(argc, argv);
@@ -402,10 +408,18 @@ int main(int argc, char* argv[])
 
 	size_t maxEpochs = ((size_t)program.get<int>("--epochs"));
 
+	std::mt19937 rand(std::random_device{}());
+
+	if (program.is_used("--rand"))
+	{
+		unsigned int seed = (unsigned int)program.get<int>("--rand");
+
+		rand.seed(seed);
+	}
 
 	std::cout << "Training NAM A2 with " << numChannels << " channels" << std::endl;
 
-	A2Types modelTrainerObj = GetTrainer(numChannels, numThreads);
+	A2Types modelTrainerObj = GetTrainer(numChannels, numThreads, rand);
 
 	if (std::holds_alternative<std::nullptr_t>(modelTrainerObj))
 	{
