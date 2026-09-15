@@ -46,8 +46,9 @@ add_executable(nam-cpu-trainer ${SOURCES})
 target_compile_definitions(nam-cpu-trainer PRIVATE NCT_VERSION_STRING="${PROJECT_VERSION}")
 
 target_include_directories(nam-cpu-trainer PUBLIC deps/cpugrad/cpugrad)
-target_include_directories(nam-cpu-trainer PUBLIC deps/cpugrad/NeuralAudio/NeuralAudio)
-target_include_directories(nam-cpu-trainer PUBLIC deps/dr_libs)
+target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/cpugrad/NeuralAudio/NeuralAudio)
+target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/cpugrad/deps/NeuralAudio/deps/RTNeural/modules/Eigen)
+target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/dr_libs)
 target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/argparse/include/argparse)
 target_link_libraries(nam-cpu-trainer PUBLIC cpugrad)
 
