@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 
 set(CMAKE_CXX_STANDARD 20)
 
-project(nam-cpu-trainer VERSION 0.0.3)
+project(nam-cpu-trainer VERSION 0.0.4)
 
 if (MSVC)
 	add_compile_options(
@@ -48,6 +48,7 @@ target_compile_definitions(nam-cpu-trainer PRIVATE NCT_VERSION_STRING="${PROJECT
 target_include_directories(nam-cpu-trainer PUBLIC deps/cpugrad/cpugrad)
 target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/cpugrad/NeuralAudio/NeuralAudio)
 target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/cpugrad/deps/NeuralAudio/deps/RTNeural/modules/Eigen)
+target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/cpugrad/deps/NeuralAudio/deps/RTNeural/modules/json)
 target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/dr_libs)
 target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/argparse/include/argparse)
 target_link_libraries(nam-cpu-trainer PUBLIC cpugrad)
