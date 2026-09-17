@@ -11,7 +11,6 @@
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
 #include "argparse.hpp"
-#include "WaveNet.h"
 #include "ModelTrainer.h"
 #include "NAM.h"
 #include "Dataset.h"
@@ -58,7 +57,7 @@ static void TestNAM(std::filesystem::path modelPath)
 
 	size_t receptiveField = modelTrainer->GetReceptiveField();
 
-	double err = mseLoss.GetTotSquared(verifyOutput.data() + receptiveField, namOutput.data() + receptiveField, numSamples - receptiveField) / (double)(numSamples - receptiveField);
+	double err = mseLoss.GetMeanLoss(verifyOutput.data() + receptiveField, namOutput.data() + receptiveField, numSamples - receptiveField) / (double)(numSamples - receptiveField);
 
 	std::cout << "MSE: " << err << std::endl;
 }

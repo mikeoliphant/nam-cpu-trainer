@@ -3,6 +3,7 @@
 #include "ModelTrainer.h"
 #include "Dense.h"
 #include "Conv1D.h"
+#include "TemplateHelper.h"
 
 using namespace cpugrad;
 
@@ -21,16 +22,14 @@ public:
 		const size_t numSamplesIn = input.GetNumCols();
 		const size_t numSamplesOut = numSamplesIn - conv.GetReceptiveField();
 
-		if (convOut.GetNumCols() == 0)
-			convOut = trainingContext->GetBufferArena().template GetBuffer<Channels>(numSamplesOut);
+		trainingContext->GetBufferArena().template GetBuffer<Channels>(convOut, numSamplesOut);
 
 		size_t conditionOffset = condition.GetNumCols() - numSamplesOut;
 		conditionMixIn.Forward(condition.Slice(conditionOffset, numSamplesOut), convOut);
 
 		conv.Forward(input, convOut);
 
-		if (reluOut.GetNumCols() == 0)
-			reluOut = trainingContext->GetBufferArena().template GetBuffer<Channels>(numSamplesOut);
+		trainingContext->GetBufferArena().template GetBuffer<Channels>(reluOut, numSamplesOut);
 		relu.Forward(convOut, reluOut);
 
 		const size_t headOutputSamples = headOutput.GetNumCols();
@@ -161,6 +160,12 @@ class A2BackpropT : public BackpropModelT<T, InOutChannels, InOutChannels>
 	struct LayersHelper
 	{};
 
+	template <int... values>
+	using Dilations = std::integer_sequence<int, values...>;
+
+	template <int... values>
+	using KernelSizes = std::integer_sequence<int, values...>;
+
 	template <int... dilationVals, int... kernelSizeVals>
 	struct LayersHelper<KernelSizes<kernelSizeVals...>, Dilations<dilationVals...>>
 	{
@@ -181,7 +186,7 @@ public:
 		{
 			const size_t numSamplesIn = input.GetNumCols();
 
-			layerArrayRechannelOut = trainingContext->GetBufferArena().template GetBuffer<Channels>(numSamplesIn);
+			trainingContext->GetBufferArena().template GetBuffer<Channels>(layerArrayRechannelOut, numSamplesIn);
 
 			size_t currentSize = numSamplesIn;
 
@@ -189,10 +194,10 @@ public:
 				{
 					currentSize -= std::get<layerIndex>(layers).GetReceptiveField();
 
-					layerOuts[layerIndex] = trainingContext->GetBufferArena().template GetBuffer<Channels>(currentSize);
+					trainingContext->GetBufferArena().template GetBuffer<Channels>(layerOuts[layerIndex], currentSize);
 				});
 
-			headOutput = trainingContext->GetBufferArena().template GetBuffer<Channels>(currentSize);
+			trainingContext->GetBufferArena().template GetBuffer<Channels>(headOutput, currentSize);
 		}
 		
 		headOutput.SetZero();
@@ -228,14 +233,13 @@ public:
 
 		currentSize += oneByOne.GetReceptiveField();
 
-		if (dHeadRechannelOut.GetNumCols() == 0)
-			dHeadRechannelOut = trainingContext->GetBufferArena().template GetBuffer<Channels>(currentSize);
+		trainingContext->GetBufferArena().template GetBuffer<Channels>(dHeadRechannelOut, currentSize);
 
 		dHeadRechannelOut.SetZero();
 		oneByOne.Backward(headOutput, dOutput, dHeadRechannelOut);
 
-		ChannelBufferDynamic<T, Channels> dLastLayerOut = trainingContext->GetBufferArena().template GetBuffer<Channels>(input.GetNumCols());
-		ChannelBufferDynamic<T, Channels> dCurrentLayerOut = trainingContext->GetBufferArena().template GetBuffer<Channels>(input.GetNumCols());
+		trainingContext->GetBufferArena().template GetBuffer<Channels>(dLastLayerOut, input.GetNumCols());
+		trainingContext->GetBufferArena().template GetBuffer<Channels>(dCurrentLayerOut, input.GetNumCols());
 		ChannelBufferDynamic<T, Channels> dTmpLayerOut;
 
 		size_t lastLayerSize = currentSize;
@@ -368,6 +372,9 @@ private:
 	ChannelBufferDynamic<T, Channels> layerArrayRechannelOut;
 
 	ChannelBufferDynamic<T, Channels> layerOuts[NumLayers];
+
+	ChannelBufferDynamic<T, Channels> dLastLayerOut;
+	ChannelBufferDynamic<T, Channels> dCurrentLayerOut;
 
 	ChannelBufferDynamic<T, Channels> headOutput;
 	Conv1DBackpropT<T, Channels, InOutChannels, 16, true, 1> oneByOne;
