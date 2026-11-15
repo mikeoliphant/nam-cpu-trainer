@@ -6,6 +6,7 @@
 #include <csignal>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 
 #include "NeuralModel.h"
 #define DR_WAV_IMPLEMENTATION
@@ -194,7 +195,7 @@ double GetRMSLevel(float* data, size_t numSamples)
 }
 
 template <typename ModelTrainer>
-void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath)
+void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand)
 {
 	unsigned int channels;
 	unsigned int sampleRate;
@@ -216,10 +217,23 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 
 	size_t verifyOffset = (size_t)numFrames - verifyFrames;
 
+	std::cout << "Activation: " << std::remove_reference_t<decltype(trainer.GetModel())>::ActivationJson << std::endl;
+
+	float* trainInput = inData + startOffset - frameDelay;
+	size_t trainFrames = (size_t)numFrames - verifyFrames - startOffset - frameDelay;
+
+	if (inputNoiseDb)
+	{
+		// Only the training region gets noise - validation input stays clean
+		std::cout << "Adding " << *inputNoiseDb << " dBFS RMS noise to training input" << std::endl;
+
+		DataGen dataGen(noiseRand);
+		dataGen.AddNoise(trainInput, trainFrames, std::pow(10.0f, *inputNoiseDb / 20.0f));
+	}
+
 	trainer.SetMaxEpochs(maxEpochs);
 	trainer.SetEpochCallback(EpochCallback);
-
-	trainer.TrainModel(inData + startOffset - frameDelay, targetData + startOffset, (size_t)numFrames - verifyFrames - startOffset - frameDelay, inData + verifyOffset - frameDelay, targetData + verifyOffset, verifyFrames - frameDelay);
+	trainer.TrainModel(trainInput, targetData + startOffset, trainFrames, inData + verifyOffset - frameDelay, targetData + verifyOffset, verifyFrames - frameDelay);
 
 	auto weights = trainer.GetBestWeights();
 
@@ -274,13 +288,27 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 		hms.seconds().count()
 	);
 
+	// One "activation" entry per layer, from the model's activation type
+	using ModelType = std::remove_reference_t<decltype(trainer.GetModel())>;
+
+	std::string activationStr;
+
+	for (size_t i = 0; i < ModelType::NumLayers; i++)
+	{
+		if (i > 0)
+			activationStr += ",\n          ";
+
+		activationStr += ModelType::ActivationJson;
+	}
+
 	std::map<std::string, std::string> variables =
 	{
 		{"{{CHANNELS}}", std::to_string(numChannels) },
 		{"{{HEADSCALE}}", std::to_string(weights[weights.size() - 1]) },
 		{"{{DATE}}", dateStr },
 		{"{{LOUDNESS}}", std::to_string(loudnessRMS) },
-		{"{{WEIGHTS}}", weightStr }
+		{"{{WEIGHTS}}", weightStr },
+		{"{{ACTIVATIONS}}", activationStr }
 	};
 
 	std::string jsonOutStr = std::string(A2JsonData);
@@ -296,7 +324,7 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 }
 
 // Keeps the compiler happy
-std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath)
+std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand)
 {
 	(void)trainer;
 	(void)inWavePath;
@@ -304,12 +332,15 @@ std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path
 	(void)maxEpochs;
 	(void)numChannels;
 	(void)outputNAMPath;
+	(void)inputNoiseDb;
+	(void)noiseRand;
 
 	return std::vector<float>();
 }
 
+// Activation used for training: LeakyReLUT (standard A2) or FastTanhT (smooth, avoids zippering; exported as "Fasttanh")
 template <int Channels>
-using A2Backprop = ModelTrainerT<float, A2BackpropT<float, 1, Channels, A2KernelSizes, A2Dilations>>;
+using A2Backprop = ModelTrainerT<float, A2BackpropT<float, 1, Channels, A2KernelSizes, A2Dilations, LeakyReLUT>>;
 
 using A2Types = std::variant<std::nullptr_t, A2Backprop<1>, A2Backprop<2>, A2Backprop<3>, A2Backprop<4>, A2Backprop<8>, A2Backprop<16>>;
 
@@ -377,6 +408,12 @@ int main(int argc, char* argv[])
 		.help("Random seed for repeatability (by default a random value is used)")
 		.scan<'i', int>();
 
+	program.add_argument("--input-noise")
+		.nargs(1, 1)
+		.metavar("<dBFS>")
+		.help("Add Gaussian noise at this RMS level (e.g. -75) to the training input (off by default)")
+		.scan<'g', float>();
+
 	try
 	{
 		program.parse_args(argc, argv);
@@ -437,6 +474,16 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 
+	std::optional<float> inputNoiseDb;
+
+	if (program.is_used("--input-noise"))
+	{
+		inputNoiseDb = program.get<float>("--input-noise");
+	}
+
+	// Seeded from the (already copied) trainer seed, so --rand makes the noise repeatable too
+	std::mt19937 noiseRand(rand());
+
 	std::visit([&](auto& modelTrainer)
 	{
 		//modelTrainer->TestBackprop(0, randData.data(), randData.data(), MAX_BATCH_SIZE);
@@ -445,7 +492,7 @@ int main(int argc, char* argv[])
 
 		//TrainNAM(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
 
-		TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs, numChannels, outputNAMPath);
+		TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs, numChannels, outputNAMPath, inputNoiseDb, noiseRand);
 
 	}, modelTrainerObj);
 

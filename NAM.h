@@ -3,11 +3,30 @@
 #include "ModelTrainer.h"
 #include "Dense.h"
 #include "Conv1D.h"
+#include "Activation.h"
 #include "TemplateHelper.h"
+
+#include <string_view>
 
 using namespace cpugrad;
 
-template <typename T, int ConditionSize, int Channels, int KernelSize, int Dilation>
+// .nam config "activation" entry for each supported activation
+template <template <typename, int> class ActivationType>
+struct NamActivationJson;
+
+template <>
+struct NamActivationJson<LeakyReLUT>
+{
+	static constexpr std::string_view Value = R"({ "type": "LeakyReLU", "negative_slope": 0.01 })";
+};
+
+template <>
+struct NamActivationJson<FastTanhT>
+{
+	static constexpr std::string_view Value = R"({ "type": "Fasttanh" })";
+};
+
+template <typename T, int ConditionSize, int Channels, int KernelSize, int Dilation, template <typename, int> class ActivationType = LeakyReLUT>
 class WaveNetLayerBackpropT : public BackpropModelT<T, Channels, Channels>
 {
 public:
@@ -29,16 +48,16 @@ public:
 
 		conv.Forward(input, convOut);
 
-		trainingContext->GetBufferArena().template GetBuffer<Channels>(reluOut, numSamplesOut);
-		relu.Forward(convOut, reluOut);
+		trainingContext->GetBufferArena().template GetBuffer<Channels>(activationOut, numSamplesOut);
+		activation.Forward(convOut, activationOut);
 
 		const size_t headOutputSamples = headOutput.GetNumCols();
 
 		auto headOutputMap = headOutput.GetEigenMap();
-		headOutputMap.noalias() += reluOut.Slice(numSamplesOut - headOutputSamples, headOutputSamples).GetEigenMapConst();
+		headOutputMap.noalias() += activationOut.Slice(numSamplesOut - headOutputSamples, headOutputSamples).GetEigenMapConst();
 
 		// Not needed on last layer - can optimize
-		oneByOne.Forward(reluOut, output);	
+		oneByOne.Forward(activationOut, output);	
 
 		auto outputMap = output.GetEigenMap();
 		size_t inputOffset = input.GetNumCols() - numSamplesOut;
@@ -60,14 +79,14 @@ public:
 
 		auto scratch = trainingContext->GetBufferArena().template GetScratchBuffer<Channels>(numSamplesOut);
 
-		oneByOne.Backward(reluOut, dOutput, scratch);
+		oneByOne.Backward(activationOut, dOutput, scratch);
 
 		const size_t headOutputSize = dHeadOutput.GetNumCols();	// dHeadOutput is always smaller
 		auto dOneByOneOutMap = scratch.Slice(numSamplesOut - headOutputSize, headOutputSize).GetEigenMap();
 		dOneByOneOutMap.noalias() += dHeadOutput.GetEigenMapConst();
 
-		// only need to know if convOut is < 0, so we could store it as a bitmask for better memory/performance
-		relu.Backward(convOut, scratch, scratch);	// relu can be done in place
+		// For LeakyReLU we only need to know if convOut is < 0, so we could store it as a bitmask for better memory/performance
+		activation.Backward(convOut, scratch, scratch);	// activation backward can be done in place
 
 		size_t conditionOffset = condition.GetNumCols() - numSamplesOut;
 		conditionMixIn.BackwardNoDInput(condition.Slice(conditionOffset, numSamplesOut), scratch);
@@ -89,16 +108,16 @@ public:
 
 		const size_t headOutputSize = dHeadOutput.GetNumCols();
 
-		auto dReluOut = trainingContext->GetBufferArena().template GetScratchBuffer<Channels>(numSamplesOut);
+		auto dActivationOut = trainingContext->GetBufferArena().template GetScratchBuffer<Channels>(numSamplesOut);
 
-		relu.Backward(convOut.Slice(numSamplesOut - headOutputSize, headOutputSize), dHeadOutput, dReluOut.Slice(numSamplesOut - headOutputSize, headOutputSize));
-		dReluOut.Slice(0, numSamplesOut - headOutputSize).SetZero();	// Zero the samples we didn't touch
+		activation.Backward(convOut.Slice(numSamplesOut - headOutputSize, headOutputSize), dHeadOutput, dActivationOut.Slice(numSamplesOut - headOutputSize, headOutputSize));
+		dActivationOut.Slice(0, numSamplesOut - headOutputSize).SetZero();	// Zero the samples we didn't touch
 
-		conditionMixIn.BackwardNoDInput(condition.Slice(offset, numSamplesOut), dReluOut);
+		conditionMixIn.BackwardNoDInput(condition.Slice(offset, numSamplesOut), dActivationOut);
 
-		conv.Backward(input, dReluOut, dInput);
+		conv.Backward(input, dActivationOut, dInput);
 
-		trainingContext->GetBufferArena().FreeScratchBuffer(dReluOut);
+		trainingContext->GetBufferArena().FreeScratchBuffer(dActivationOut);
 	}
 
 	size_t GetReceptiveField() override
@@ -146,12 +165,12 @@ private:
 	Conv1DBackpropT<T, Channels, Channels, KernelSize, true, Dilation> conv;
 	ChannelBufferDynamic<T, Channels> convOut;
 	DenseBackpropT<T, ConditionSize, Channels, false> conditionMixIn;
-	LeakyReLUT<T, Channels> relu;
-	ChannelBufferDynamic<T, Channels> reluOut;
+	ActivationType<T, Channels> activation;
+	ChannelBufferDynamic<T, Channels> activationOut;
 	DenseBackpropT<T, Channels, Channels, true> oneByOne;
 };
 
-template <typename T, int InOutChannels, int Channels, typename KernelSizeSequence, typename DilationsSequence>
+template <typename T, int InOutChannels, int Channels, typename KernelSizeSequence, typename DilationsSequence, template <typename, int> class ActivationType = LeakyReLUT>
 class A2BackpropT : public BackpropModelT<T, InOutChannels, InOutChannels>
 {
 	using BackpropModelT<T, InOutChannels, InOutChannels>::trainingContext;
@@ -169,7 +188,7 @@ class A2BackpropT : public BackpropModelT<T, InOutChannels, InOutChannels>
 	template <int... dilationVals, int... kernelSizeVals>
 	struct LayersHelper<KernelSizes<kernelSizeVals...>, Dilations<dilationVals...>>
 	{
-		using type = std::tuple<WaveNetLayerBackpropT<T, InOutChannels, Channels, kernelSizeVals, dilationVals>...>;
+		using type = std::tuple<WaveNetLayerBackpropT<T, InOutChannels, Channels, kernelSizeVals, dilationVals, ActivationType>...>;
 	};
 
 	using Layers = typename LayersHelper<KernelSizeSequence, DilationsSequence>::type;
@@ -177,6 +196,9 @@ class A2BackpropT : public BackpropModelT<T, InOutChannels, InOutChannels>
 public:
 	Layers layers;
 	static constexpr auto NumLayers = std::tuple_size_v<decltype (layers)>;
+
+	// The per-layer "activation" entry for the .nam config
+	static constexpr std::string_view ActivationJson = NamActivationJson<ActivationType>::Value;
 
 	void Forward(const ChannelRowSpan<T, InOutChannels>& input, const ChannelRowSpan<T, InOutChannels>& output) override
 	{
