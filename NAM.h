@@ -267,16 +267,9 @@ public:
 				dLastLayerOut = dCurrentLayerOut;
 				dCurrentLayerOut = dTmpLayerOut;
 				lastLayerSize = currentSize;
-
-				//if (dTmpLayerOut.GetNumCols() != 0)
-				//{
-				//	trainingContext->GetBufferArena().FreeScratchBuffer(dTmpLayerOut);
-				//}
 			});
 
 		layerArrayRechannel.BackwardNoDInput(input, dLastLayerOut);	// skip dInput gradient calculation since it isn't used
-
-		//trainingContext->GetBufferArena().FreeScratchBuffer(dLastLayerOut);
 	}
 
 	size_t GetReceptiveField() override
@@ -379,7 +372,7 @@ private:
 	ChannelBufferDynamic<T, Channels> headOutput;
 	Conv1DBackpropT<T, Channels, InOutChannels, 16, true, 1> oneByOne;
 	ChannelBufferDynamic<T, Channels> dHeadRechannelOut;
-	float headScale = 0.1f;
+	float headScale = 0.01f;	// matches NAM's head_scale
 };
 
 using A2KernelSizes = std::integer_sequence<int, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 15, 15, 6, 6, 6, 6, 6, 6, 6>;

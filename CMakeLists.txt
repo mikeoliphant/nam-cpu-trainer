@@ -35,6 +35,7 @@ endif()
 set(BUILD_NAMCORE OFF CACHE BOOL "") 
 
 add_subdirectory(deps/cpugrad cpugrad)
+add_subdirectory(nam-eval)
 
 set(SOURCES
 	NeuralCpuTrainer.cpp
@@ -46,6 +47,7 @@ add_executable(nam-cpu-trainer ${SOURCES})
 target_compile_definitions(nam-cpu-trainer PRIVATE NCT_VERSION_STRING="${PROJECT_VERSION}")
 
 target_include_directories(nam-cpu-trainer PUBLIC deps/cpugrad/cpugrad)
+target_include_directories(nam-cpu-trainer PUBLIC deps/cpugrad/deps/AudioFFT)
 target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/cpugrad/NeuralAudio/NeuralAudio)
 target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/cpugrad/deps/NeuralAudio/deps/RTNeural/modules/Eigen)
 target_include_directories(nam-cpu-trainer SYSTEM PRIVATE deps/cpugrad/deps/NeuralAudio/deps/RTNeural/modules/json)
