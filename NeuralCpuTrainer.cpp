@@ -85,7 +85,9 @@ bool EpochCallback(size_t epoch, double loss)
 	return (keepRunning == 1);
 }
 
-std::vector<float> GeneratePinkNoise(size_t numSamples, float targetDbRms = -15.0f)
+// Pink noise from a fixed seed, so it is the same signal every run and on every platform (std::mt19937's output is
+// fully specified, unlike std::uniform_real_distribution's)
+std::vector<float> GeneratePinkNoise(size_t numSamples, float targetDbRms = -15.0f, unsigned int seed = 12345)
 {
 	if (numSamples == 0) return std::vector<float>();
 
@@ -99,9 +101,10 @@ std::vector<float> GeneratePinkNoise(size_t numSamples, float targetDbRms = -15.
 	std::vector<float> rows(numRows, 0.0f);
 	float runningSum = 0.0f;
 
-	std::random_device rd;
-	std::mt19937 generator(rd());
-	std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+	std::mt19937 generator(seed);
+
+	// Uniform in [-1, 1)
+	auto dist = [](std::mt19937& gen) { return (float)(((double)gen() / 4294967296.0) * 2.0 - 1.0); };
 
 	for (int i = 0; i < numRows; ++i) {
 		rows[i] = dist(generator);
@@ -274,6 +277,11 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 	trainer.TrainModel(trainInput, targetData + startOffset, trainFrames, inData + verifyOffset - frameDelay, targetData + verifyOffset, verifyFrames - frameDelay);
 
 	auto weights = trainer.GetBestWeights();
+
+	// The model still has the last epoch's weights - load the best ones, which are what gets exported, so the loudness
+	// measurement below is of the exported model
+	auto weightIt = weights.begin();
+	trainer.GetModel().SetWeights(weightIt);
 
 	// Undo the target normalization so the exported model plays at the capture's real level
 	// (this also makes the loudness measurement below come out at the real level)
