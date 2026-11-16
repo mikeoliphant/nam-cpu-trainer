@@ -231,11 +231,46 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 		dataGen.AddNoise(trainInput, trainFrames, std::pow(10.0f, *inputNoiseDb / 20.0f));
 	}
 
+	// Normalize the target (training and validation) so the training region is at -18 dBFS RMS, like NAM's
+	// normalize_joint_dataset_output. The input is left alone. The scale is undone at export via head_scale.
+	double targetSumSquares = 0;
+
+	for (size_t i = 0; i < trainFrames; i++)
+	{
+		double sample = targetData[startOffset + i];
+
+		targetSumSquares += sample * sample;
+	}
+
+	double targetRMS = std::sqrt(targetSumSquares / (double)trainFrames);
+
+	if (!(targetRMS > 0) || !std::isfinite(targetRMS))
+	{
+		std::cerr << "Training target is silent or contains invalid samples - cannot normalize" << std::endl;
+
+		return;
+	}
+
+	constexpr double targetNormalizeDb = -18.0;
+
+	double targetScale = std::pow(10.0, targetNormalizeDb / 20.0) / targetRMS;
+
+	std::cout << "Target training RMS: " << std::format("{:.2f}", LinearToDbAmplitude(targetRMS)) << " dBFS, scaling target by " << std::format("{:.6f}", targetScale) << " to " << targetNormalizeDb << " dBFS" << std::endl;
+
+	for (size_t i = 0; i < (size_t)numFrames; i++)
+	{
+		targetData[i] = (float)(targetData[i] * targetScale);
+	}
+
 	trainer.SetMaxEpochs(maxEpochs);
 	trainer.SetEpochCallback(EpochCallback);
 	trainer.TrainModel(trainInput, targetData + startOffset, trainFrames, inData + verifyOffset - frameDelay, targetData + verifyOffset, verifyFrames - frameDelay);
 
 	auto weights = trainer.GetBestWeights();
+
+	// Undo the target normalization so the exported model plays at the capture's real level
+	// (this also makes the loudness measurement below come out at the real level)
+	trainer.GetModel().SetHeadScale((float)(trainer.GetModel().GetHeadScale() / targetScale));
 
 	weights.push_back(trainer.GetModel().GetHeadScale());
 
@@ -304,7 +339,7 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 	std::map<std::string, std::string> variables =
 	{
 		{"{{CHANNELS}}", std::to_string(numChannels) },
-		{"{{HEADSCALE}}", std::to_string(weights[weights.size() - 1]) },
+		{"{{HEADSCALE}}", std::format("{:.9g}", weights[weights.size() - 1]) },	// full precision, so it matches the last weight
 		{"{{DATE}}", dateStr },
 		{"{{LOUDNESS}}", std::to_string(loudnessRMS) },
 		{"{{WEIGHTS}}", weightStr },

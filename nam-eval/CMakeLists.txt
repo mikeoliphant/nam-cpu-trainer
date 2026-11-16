@@ -11,7 +11,8 @@ target_include_directories(nam-eval SYSTEM PRIVATE ../deps/cpugrad/deps/NeuralAu
 target_include_directories(nam-eval SYSTEM PRIVATE ../deps/cpugrad/deps/NeuralAudio/deps/RTNeural/modules/json)
 target_include_directories(nam-eval SYSTEM PRIVATE ../deps/dr_libs)
 target_include_directories(nam-eval SYSTEM PRIVATE ../deps/argparse/include/argparse)
-target_link_libraries(nam-eval PUBLIC cpugrad)
+
+target_link_libraries(nam-eval PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,cpugrad>")
 
 source_group(nam-eval ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCES})
 
