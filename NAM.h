@@ -41,15 +41,21 @@ public:
 		const size_t numSamplesIn = input.GetNumCols();
 		const size_t numSamplesOut = numSamplesIn - conv.GetReceptiveField();
 
-		trainingContext->GetBufferArena().template GetBuffer<Channels>(convOut, numSamplesOut);
+		trainingContext->GetBufferArena().template GetBuffer<Channels>(activationOut, numSamplesOut);
+
+		// If the activation can do backward from its output, the pre-activation values aren't kept: the conv
+		// is computed straight into activationOut and the activation applied in place
+		if constexpr (StorePreActivation)
+			trainingContext->GetBufferArena().template GetBuffer<Channels>(convOut, numSamplesOut);
+
+		auto& preActivation = StorePreActivation ? convOut : activationOut;
 
 		size_t conditionOffset = condition.GetNumCols() - numSamplesOut;
-		conditionMixIn.Forward(condition.Slice(conditionOffset, numSamplesOut), convOut);
+		conditionMixIn.Forward(condition.Slice(conditionOffset, numSamplesOut), preActivation);
 
-		conv.Forward(input, convOut);
+		conv.Forward(input, preActivation);
 
-		trainingContext->GetBufferArena().template GetBuffer<Channels>(activationOut, numSamplesOut);
-		activation.Forward(convOut, activationOut);
+		activation.Forward(preActivation, activationOut);
 
 		const size_t headOutputSamples = headOutput.GetNumCols();
 
@@ -85,8 +91,7 @@ public:
 		auto dOneByOneOutMap = scratch.Slice(numSamplesOut - headOutputSize, headOutputSize).GetEigenMap();
 		dOneByOneOutMap.noalias() += dHeadOutput.GetEigenMapConst();
 
-		// For LeakyReLU we only need to know if convOut is < 0, so we could store it as a bitmask for better memory/performance
-		activation.Backward(convOut, scratch, scratch);	// activation backward can be done in place
+		ActivationBackward(0, numSamplesOut, scratch, scratch);	// activation backward can be done in place
 
 		size_t conditionOffset = condition.GetNumCols() - numSamplesOut;
 		conditionMixIn.BackwardNoDInput(condition.Slice(conditionOffset, numSamplesOut), scratch);
@@ -110,7 +115,7 @@ public:
 
 		auto dActivationOut = trainingContext->GetBufferArena().template GetScratchBuffer<Channels>(numSamplesOut);
 
-		activation.Backward(convOut.Slice(numSamplesOut - headOutputSize, headOutputSize), dHeadOutput, dActivationOut.Slice(numSamplesOut - headOutputSize, headOutputSize));
+		ActivationBackward(numSamplesOut - headOutputSize, headOutputSize, dHeadOutput, dActivationOut.Slice(numSamplesOut - headOutputSize, headOutputSize));
 		dActivationOut.Slice(0, numSamplesOut - headOutputSize).SetZero();	// Zero the samples we didn't touch
 
 		conditionMixIn.BackwardNoDInput(condition.Slice(offset, numSamplesOut), dActivationOut);
@@ -162,10 +167,24 @@ public:
 	}
 
 private:
+	using ActivationT = ActivationType<T, Channels>;
+
+	// Keep the pre-activation values only if the activation's backward needs them
+	static constexpr bool StorePreActivation = !ActivationT::CanBackwardFromOutput;
+
+	// Activation gradient for columns [startCol, startCol + numCols) of this layer's activation
+	void ActivationBackward(size_t startCol, size_t numCols, const ChannelRowSpan<T, Channels>& dOutput, const ChannelRowSpan<T, Channels>& dInput)
+	{
+		if constexpr (StorePreActivation)
+			activation.Backward(convOut.Slice(startCol, numCols), dOutput, dInput);
+		else
+			activation.BackwardFromOutput(activationOut.Slice(startCol, numCols), dOutput, dInput);
+	}
+
 	Conv1DBackpropT<T, Channels, Channels, KernelSize, true, Dilation> conv;
-	ChannelBufferDynamic<T, Channels> convOut;
+	ChannelBufferDynamic<T, Channels> convOut;	// only used if StorePreActivation
 	DenseBackpropT<T, ConditionSize, Channels, false> conditionMixIn;
-	ActivationType<T, Channels> activation;
+	ActivationT activation;
 	ChannelBufferDynamic<T, Channels> activationOut;
 	DenseBackpropT<T, Channels, Channels, true> oneByOne;
 };
