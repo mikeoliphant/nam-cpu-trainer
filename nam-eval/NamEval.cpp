@@ -1,3 +1,9 @@
+#include <filesystem>
+#include <format>
+#include <iostream>
+#include <limits>
+#include <vector>
+
 #include "NeuralModel.h"
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
