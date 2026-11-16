@@ -119,3 +119,5 @@ To use clang on Windows, make sure you have the relevant packages installed usin
 
 ```-DTARGET_ARCH=<arch>```: For clang/gcc, you can use this to change the default "-march=<arch>" for the compiler. It defaults to "native".
 
+Note - building with GCC 15 on a CPU that supports AVX-512 FP16 (such as recent Intel server CPUs) currently fails with errors in Eigen's `PacketMathFP16.h`, because "-march=native" enables Eigen's AVX-512 FP16 code. To work around this, use ```-DTARGET_ARCH=x86-64-v3```.
+
