@@ -180,6 +180,12 @@ double LinearToDbAmplitude(double linear)
 	return 20.0 * std::log10(linear);
 }
 
+// A float as the double it reads as (so 0.004f is written as 0.004, not 0.004000000189989805)
+double FloatForJson(float value)
+{
+	return std::stod(std::format("{}", value));
+}
+
 double GetRMSLevel(float* data, size_t numSamples)
 {
 	double sumOfSquares = 0.0;
@@ -195,7 +201,7 @@ double GetRMSLevel(float* data, size_t numSamples)
 }
 
 template <typename ModelTrainer>
-void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand)
+void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand, const LossSpec& lossSpec, unsigned int seed)
 {
 	unsigned int channels;
 	unsigned int sampleRate;
@@ -262,6 +268,7 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 		targetData[i] = (float)(targetData[i] * targetScale);
 	}
 
+	trainer.SetLoss(lossSpec);
 	trainer.SetMaxEpochs(maxEpochs);
 	trainer.SetEpochCallback(EpochCallback);
 	trainer.TrainModel(trainInput, targetData + startOffset, trainFrames, inData + verifyOffset - frameDelay, targetData + verifyOffset, verifyFrames - frameDelay);
@@ -336,6 +343,28 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 		activationStr += ModelType::ActivationJson;
 	}
 
+	// Our own metadata section (not part of NAM's format) - enough to reproduce the model and judge its quality
+	nlohmann::ordered_json trainerInfo;
+
+	trainerInfo["version"] = NCT_VERSION_STRING;
+	trainerInfo["loss"] = FormatLossSpec(trainer.GetLossSpec());
+	trainerInfo["seed"] = seed;
+	trainerInfo["threads"] = trainer.GetNumThreads();
+	trainerInfo["epochs"] = { { "requested", trainer.GetMaxEpochs() }, { "completed", trainer.GetEpochsCompleted() }, { "best", trainer.GetBestEpoch() } };
+	trainerInfo["validation_esr"] = bestLoss;
+
+	if (inputNoiseDb)
+		trainerInfo["input_noise_dbfs"] = FloatForJson(*inputNoiseDb);
+
+	trainerInfo["target_normalization"] = { { "rms_dbfs", LinearToDbAmplitude(targetRMS) }, { "scale", targetScale } };
+	trainerInfo["optimizer"] = { { "lr", FloatForJson(trainer.GetLearningRate()) }, { "lr_decay", FloatForJson(trainer.GetLearningRateDecay()) }, { "segment", trainer.GetTrainingSize() }, { "mini_batch", trainer.GetMiniBatchSize() } };
+	trainerInfo["data"] = { { "train_start_seconds", (double)startOffset / sampleRate }, { "validation_seconds", (double)verifyFrames / sampleRate } };
+
+	// Indent to sit inside the template's "metadata" object
+	std::string trainerInfoStr = trainerInfo.dump(2);
+
+	ReplaceVariable(trainerInfoStr, "\n", "\n    ");
+
 	std::map<std::string, std::string> variables =
 	{
 		{"{{CHANNELS}}", std::to_string(numChannels) },
@@ -343,7 +372,8 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 		{"{{DATE}}", dateStr },
 		{"{{LOUDNESS}}", std::to_string(loudnessRMS) },
 		{"{{WEIGHTS}}", weightStr },
-		{"{{ACTIVATIONS}}", activationStr }
+		{"{{ACTIVATIONS}}", activationStr },
+		{"{{TRAINER_INFO}}", trainerInfoStr }
 	};
 
 	std::string jsonOutStr = std::string(A2JsonData);
@@ -359,7 +389,7 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 }
 
 // Keeps the compiler happy
-std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand)
+std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand, const LossSpec& lossSpec, unsigned int seed)
 {
 	(void)trainer;
 	(void)inWavePath;
@@ -369,6 +399,8 @@ std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path
 	(void)outputNAMPath;
 	(void)inputNoiseDb;
 	(void)noiseRand;
+	(void)lossSpec;
+	(void)seed;
 
 	return std::vector<float>();
 }
@@ -400,6 +432,27 @@ A2Types GetTrainer(size_t numChannels, size_t numThreads, std::mt19937& rand)
 	return nullptr;
 }
 
+static std::string LossHelp()
+{
+	std::string help = "Training loss: comma-separated name[:weight][:key=value...] terms, e.g. mse:1,mrstft:0.0005:sc=0. Losses:";
+
+	for (auto& type : GetLossTypes())
+	{
+		help += "\n    " + type.Name + " - " + type.Description;
+
+		if (!type.Params.empty())
+		{
+			help += " [defaults:";
+
+			for (auto& [name, value] : type.Params)
+				help += std::format(" {}={}", name, value);
+
+			help += "]";
+		}
+	}
+
+	return help;
+}
 
 int main(int argc, char* argv[])
 {	
@@ -449,6 +502,12 @@ int main(int argc, char* argv[])
 		.help("Add Gaussian noise at this RMS level (e.g. -75) to the training input (off by default)")
 		.scan<'g', float>();
 
+	program.add_argument("-l", "--loss")
+		.default_value(std::string("mse:1,mrstft:0.0005"))
+		.nargs(1)
+		.metavar("<lossSpec>")
+		.help(LossHelp());
+
 	try
 	{
 		program.parse_args(argc, argv);
@@ -489,16 +548,27 @@ int main(int argc, char* argv[])
 
 	size_t maxEpochs = ((size_t)program.get<int>("--epochs"));
 
-	std::mt19937 rand(std::random_device{}());
+	// Always use an explicit seed, so it can be recorded in the model and the run reproduced
+	unsigned int seed = program.is_used("--rand") ? (unsigned int)program.get<int>("--rand") : std::random_device{}();
 
-	if (program.is_used("--rand"))
+	std::mt19937 rand(seed);
+
+	LossSpec lossSpec;
+
+	try
 	{
-		unsigned int seed = (unsigned int)program.get<int>("--rand");
+		lossSpec = ParseLossSpec(program.get("--loss"));
+	}
+	catch (const std::invalid_argument& e)
+	{
+		std::cerr << std::endl << "Invalid --loss: " << e.what() << std::endl;
 
-		rand.seed(seed);
+		return 1;
 	}
 
 	std::cout << "Training NAM A2 with " << numChannels << " channels" << std::endl;
+	std::cout << "Loss: " << FormatLossSpec(lossSpec) << std::endl;
+	std::cout << "Random seed: " << seed << std::endl;
 
 	A2Types modelTrainerObj = GetTrainer(numChannels, numThreads, rand);
 
@@ -527,7 +597,7 @@ int main(int argc, char* argv[])
 
 		//TrainNAM(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
 
-		TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs, numChannels, outputNAMPath, inputNoiseDb, noiseRand);
+		TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs, numChannels, outputNAMPath, inputNoiseDb, noiseRand, lossSpec, seed);
 
 	}, modelTrainerObj);
 
