@@ -10,7 +10,7 @@ Pre-built binaries for Windows x64, Linux x64 and Mac Arm64 can be downloaded fr
 CPU that supports the AVX2 instruction set. The Mac binary is only for Arm64 (not intel) Macs and will likely require some fiddling to let Apple's security let you run it.
 
 ```
-Usage: nam-cpu-trainer [--help] [--version] --input <input.wav> --output <output.wav> [--channels <numChannels>] [--threads <numThreads>] [--epochs <maxEpochs>] [--rand <randomSeed>]
+Usage: nam-cpu-trainer [--help] [--version] --input <input.wav> --output <output.wav> [--channels <numChannels>] [--threads <numThreads>] [--epochs <maxEpochs>] [--rand <randomSeed>] [--input-noise <dBFS>] [--loss <lossSpec>]
 
 Optional arguments:
   -h, --help                    shows help message and exits
@@ -21,6 +21,17 @@ Optional arguments:
   -t, --threads <numThreads>    Number of threads (defaults to detected # cores)
   -e, --epochs <maxEpochs>      Maximum number of epochs to train for [default: 1000]
   -r, --rand <randomSeed>       Random seed for repeatability (by default a random value is used)
+  --input-noise <dBFS>          Add Gaussian noise at this RMS level (e.g. -75) to the training input (off by default)
+  -l, --loss <lossSpec>         Training loss: comma-separated name[:weight][:key=value...] terms, e.g. mse:1,mrstft:0.0005:sc=0. Losses:
+                                    mse - mean squared error
+                                    esr - error-to-signal ratio
+                                    mrstft - multi-resolution STFT (sc = spectral convergence weight, logmag = log-magnitude weight) [defaults: sc=0 logmag=1] [default: "mse:1,mrstft:0.0005"]
+```
+
+For example, to train a full (8 channel) model for 100 epochs:
+
+```
+nam-cpu-trainer -i input.wav -o output.wav -c 8 -e 100
 ```
 
 When training concludes, the resulting .nam file will be the same path/name as "output.wav", but with a .nam extension.
@@ -28,6 +39,26 @@ When training concludes, the resulting .nam file will be the same path/name as "
 If an epoch has a new low ESR, you will see a "*" at the end of the line. This means that weights have been stored for this epoch, and it will be used to produce the model unless a better epoch comes later.
 
 To end training early while still producing a model, hit "Ctrl-C". This will stop training after the current epoch ends. Hitting "Ctrl-C" again will immediately abort training - but will **not** create a model.
+
+### Training loss
+
+The loss used for training is set with `--loss`, as a comma-separated list of weighted terms. Each term is a loss name, optionally followed by `:weight` (default 1) and any number of `:key=value` parameters:
+
+| Spec | Meaning |
+|---|---|
+| `mse:1,mrstft:0.0005` | MSE plus 0.0005 x MR-STFT (the default, similar to the standard NAM trainer) |
+| `mse` | MSE only |
+| `mse:1,mrstft:0.0005:sc=1` | Also include the spectral convergence part of MR-STFT |
+
+By default, the MR-STFT loss uses only its log-magnitude part (`sc=0:logmag=1`). Names and keys are case-insensitive. The full loss, with all defaults filled in, is printed at the start of training.
+
+Whatever the training loss, the best epoch is always chosen by validation ESR.
+
+### Reproducibility
+
+The random seed is printed at the start of training. Re-running with `-r <seed>` and the same other settings (including the number of threads) reproduces the same model.
+
+The output .nam file records the training settings and results in a `nam_cpu_trainer` section of its metadata: trainer version, loss, seed, thread count, epochs (requested, completed and best), validation ESR, input noise (if used), target normalization, optimizer settings and the training/validation regions.
 
 ## Functionality
 
