@@ -14,16 +14,9 @@ jobs:
     - uses: actions/checkout@v3.3.0
       with:
         submodules: recursive
-
-    - name: Setup GCC 15
-      uses: egor-tensin/setup-gcc@v2
-      with:
-        version: '15'
     
     - name: Build
       working-directory: ${{github.workspace}}/build
-      env:
-        CXX: g++-15   
       run: |
         cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DTARGET_ARCH=x86-64-v3
         cmake --build . --config $BUILD_TYPE -j4
