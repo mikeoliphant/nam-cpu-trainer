@@ -4,10 +4,12 @@ nam-cpu-trainer is a single-executable [neural-amp-modeler](https://github.com/s
 
 It is purely CPU-based - no graphics card is needed. It uses a high-performance, highly portable training implementation based on [cpugrad](https://github.com/mikeoliphant/cpugrad).
 
-## Usage
+## Getting it
 
 Pre-built binaries for Windows x64, Linux x64 and Mac Arm64 can be downloaded from the [Releases](https://github.com/mikeoliphant/nam-cpu-trainer/releases) section. Note that the x64 binaries require a *reasonably* modern
 CPU that supports the AVX2 instruction set. The Mac binary is only for Arm64 (not intel) Macs and will likely require some fiddling to let Apple's security let you run it.
+
+## Usage
 
 ```
 Usage: nam-cpu-trainer [--help] [--version] --input <input.wav> --output <output.wav>
