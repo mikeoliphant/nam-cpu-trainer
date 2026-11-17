@@ -27,7 +27,7 @@
 using namespace NeuralAudio;
 using namespace cpugrad;
 
-static void TestNAM(std::filesystem::path modelPath)
+[[maybe_unused]] static void TestNAM(std::filesystem::path modelPath)
 {
 	NeuralAudio::NeuralModelLoader loader;
 
