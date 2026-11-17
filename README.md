@@ -10,22 +10,35 @@ Pre-built binaries for Windows x64, Linux x64 and Mac Arm64 can be downloaded fr
 CPU that supports the AVX2 instruction set. The Mac binary is only for Arm64 (not intel) Macs and will likely require some fiddling to let Apple's security let you run it.
 
 ```
-Usage: nam-cpu-trainer [--help] [--version] --input <input.wav> --output <output.wav> [--channels <numChannels>] [--threads <numThreads>] [--epochs <maxEpochs>] [--rand <randomSeed>] [--input-noise <dBFS>] [--loss <lossSpec>]
+Usage: nam-cpu-trainer [--help] [--version] --input <input.wav> --output <output.wav>
+                       [--channels <numChannels>] [--threads <numThreads>] [--epochs <maxEpochs>]
+                       [--rand <randomSeed>] [--input-noise <dBFS>] [--loss <lossSpec>]
+                       [--metadata <key=value>]...
 
 Optional arguments:
   -h, --help                    shows help message and exits
   -v, --version                 prints version information and exits
-  -i, --input <input.wav>       Input .wav file use to capture [required]
+  -i, --input <input.wav>       Input .wav file used for the capture [required]
   -o, --output <output.wav>     Output (captured) .wav file [required]
   -c, --channels <numChannels>  Number of channels [default: 3]
-  -t, --threads <numThreads>    Number of threads (defaults to detected # cores)
+  -t, --threads <numThreads>    Number of threads (defaults to the number of physical cores)
   -e, --epochs <maxEpochs>      Maximum number of epochs to train for [default: 1000]
-  -r, --rand <randomSeed>       Random seed for repeatability (by default a random value is used)
-  --input-noise <dBFS>          Add Gaussian noise at this RMS level (e.g. -75) to the training input (off by default)
-  -l, --loss <lossSpec>         Training loss: comma-separated name[:weight][:key=value...] terms, e.g. mse:1,mrstft:0.0005:sc=0. Losses:
+  -r, --rand <randomSeed>       Random seed, for repeatability (by default a random seed is used,
+                                and recorded in the model)
+  --input-noise <dBFS>          Add Gaussian noise at this RMS level (e.g. -75) to the training
+                                input (off by default)
+  -l, --loss <lossSpec>         Training loss, as comma-separated name[:weight][:key=value...]
+                                terms. Losses:
                                     mse - mean squared error
                                     esr - error-to-signal ratio
-                                    mrstft - multi-resolution STFT (sc = spectral convergence weight, logmag = log-magnitude weight) [defaults: sc=0 logmag=1] [default: "mse:1,mrstft:0.0005"]
+                                    mrstft - multi-resolution STFT (sc = spectral convergence
+                                      weight, logmag = log-magnitude weight)
+                                      defaults: sc=0 logmag=1 [default: "mse:1,mrstft:0.0005"]
+  -m, --metadata <key=value>    Add a key=value string to the model's metadata. Can be given more
+                                than once, e.g.:
+                                    -m name="Boss SD-1" -m modeled_by=Mike
+                                NAM's standard keys include name, modeled_by, gear_make,
+                                gear_model, gear_type and tone_type [may be repeated]
 ```
 
 For example, to train a full (8 channel) model for 100 epochs:
@@ -53,6 +66,16 @@ The loss used for training is set with `--loss`, as a comma-separated list of we
 By default, the MR-STFT loss uses only its log-magnitude part (`sc=0:logmag=1`). Names and keys are case-insensitive. The full loss, with all defaults filled in, is printed at the start of training.
 
 Whatever the training loss, the best epoch is always chosen by validation ESR.
+
+### Model metadata
+
+Extra information can be added to the output .nam file's metadata with `-m key=value`, which can be repeated:
+
+```
+nam-cpu-trainer -i input.wav -o output.wav -m name="Boss SD-1" -m modeled_by=Mike -m gear_type=pedal
+```
+
+Values are stored as strings. NAM's standard metadata keys are `name`, `modeled_by`, `gear_make`, `gear_model`, `gear_type` and `tone_type`, which NAM players and model sites may show. Any other keys are stored as well. `date`, `loudness` and `nam_cpu_trainer` are written by the trainer and can't be set this way.
 
 ### Reproducibility
 

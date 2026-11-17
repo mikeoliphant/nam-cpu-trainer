@@ -7,6 +7,13 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <algorithm>
+#include <cstdlib>
+
+#if !defined(_WIN32)
+#include <sys/ioctl.h>
+#include <unistd.h>
+#endif
 
 #include "NeuralModel.h"
 #define DR_WAV_IMPLEMENTATION
@@ -189,6 +196,82 @@ double FloatForJson(float value)
 	return std::stod(std::format("{}", value));
 }
 
+// User-supplied "key=value" strings for the model's metadata, in the order given
+using MetadataPairs = std::vector<std::pair<std::string, std::string>>;
+
+// Command-line text as UTF-8. On Windows, arguments arrive in the system code page rather than UTF-8.
+std::string CommandLineToUtf8(const std::string& text)
+{
+#if defined(_WIN32)
+	if (text.empty())
+		return text;
+
+	int wideLength = MultiByteToWideChar(CP_ACP, 0, text.data(), (int)text.size(), nullptr, 0);
+	std::wstring wide(wideLength, L'\0');
+	MultiByteToWideChar(CP_ACP, 0, text.data(), (int)text.size(), wide.data(), wideLength);
+
+	int utf8Length = WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideLength, nullptr, 0, nullptr, nullptr);
+	std::string utf8(utf8Length, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideLength, utf8.data(), utf8Length, nullptr, nullptr);
+
+	return utf8;
+#else
+	return text;
+#endif
+}
+
+// Parses --metadata "key=value" arguments. Throws std::invalid_argument with a readable message.
+MetadataPairs ParseMetadata(const std::vector<std::string>& args)
+{
+	// Keys the trainer writes itself
+	static const std::vector<std::string> reservedKeys = { "date", "loudness", "nam_cpu_trainer" };
+
+	MetadataPairs pairs;
+
+	for (const std::string& arg : args)
+	{
+		size_t equals = arg.find('=');
+
+		if (equals == std::string::npos)
+			throw std::invalid_argument("\"" + arg + "\" should be key=value");
+
+		std::string key = CommandLineToUtf8(arg.substr(0, equals));
+		std::string value = CommandLineToUtf8(arg.substr(equals + 1));
+
+		if (key.empty())
+			throw std::invalid_argument("\"" + arg + "\" has an empty key");
+
+		if (std::find(reservedKeys.begin(), reservedKeys.end(), key) != reservedKeys.end())
+			throw std::invalid_argument("\"" + key + "\" is set by the trainer and can't be overridden");
+
+		for (const auto& [existingKey, existingValue] : pairs)
+		{
+			if (existingKey == key)
+				throw std::invalid_argument("\"" + key + "\" is given more than once");
+		}
+
+		pairs.emplace_back(std::move(key), std::move(value));
+	}
+
+	return pairs;
+}
+
+// JSON members for the metadata pairs, one per line, each followed by a comma, to sit in the template's metadata object
+std::string MetadataToJson(const MetadataPairs& pairs)
+{
+	std::string json;
+
+	for (const auto& [key, value] : pairs)
+	{
+		// Escaped by nlohmann; any invalid UTF-8 becomes U+FFFD instead of throwing
+		auto quote = [](const std::string& text) { return nlohmann::json(text).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace); };
+
+		json += "\n    " + quote(key) + ": " + quote(value) + ",";
+	}
+
+	return json;
+}
+
 double GetRMSLevel(float* data, size_t numSamples)
 {
 	double sumOfSquares = 0.0;
@@ -204,7 +287,7 @@ double GetRMSLevel(float* data, size_t numSamples)
 }
 
 template <typename ModelTrainer>
-void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand, const LossSpec& lossSpec, unsigned int seed)
+void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand, const LossSpec& lossSpec, unsigned int seed, const MetadataPairs& userMetadata)
 {
 	unsigned int channels;
 	unsigned int sampleRate;
@@ -381,7 +464,8 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 		{"{{LOUDNESS}}", std::to_string(loudnessRMS) },
 		{"{{WEIGHTS}}", weightStr },
 		{"{{ACTIVATIONS}}", activationStr },
-		{"{{TRAINER_INFO}}", trainerInfoStr }
+		{"{{TRAINER_INFO}}", trainerInfoStr },
+		{"{{USER_METADATA}}", MetadataToJson(userMetadata) }
 	};
 
 	std::string jsonOutStr = std::string(A2JsonData);
@@ -397,7 +481,7 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 }
 
 // Keeps the compiler happy
-std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand, const LossSpec& lossSpec, unsigned int seed)
+std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand, const LossSpec& lossSpec, unsigned int seed, const MetadataPairs& userMetadata)
 {
 	(void)trainer;
 	(void)inWavePath;
@@ -409,6 +493,7 @@ std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path
 	(void)noiseRand;
 	(void)lossSpec;
 	(void)seed;
+	(void)userMetadata;
 
 	return std::vector<float>();
 }
@@ -440,9 +525,142 @@ A2Types GetTrainer(size_t numChannels, size_t numThreads, std::mt19937& rand)
 	return nullptr;
 }
 
+// Width to lay out --help for: the terminal's width, clamped to 80-120 columns (narrower is unreadable anyway, and
+// much wider lines are hard to scan). When stdout isn't a terminal, the COLUMNS environment variable is used if set,
+// otherwise 80.
+static size_t TerminalWidth()
+{
+	size_t width = 0;
+
+#if defined(_WIN32)
+	CONSOLE_SCREEN_BUFFER_INFO info;
+
+	if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info))
+		width = (size_t)(info.srWindow.Right - info.srWindow.Left + 1);
+#else
+	struct winsize size;
+
+	if (isatty(STDOUT_FILENO) && (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0))
+		width = size.ws_col;
+#endif
+
+	if (width == 0)
+	{
+		if (const char* columns = std::getenv("COLUMNS"))
+			width = (size_t)std::strtoul(columns, nullptr, 10);
+	}
+
+	if (width == 0)
+		width = 80;
+
+	return std::clamp(width, (size_t)80, (size_t)120);
+}
+
+// argparse starts the help text at about column 32. Keep 2 columns spare at the right edge.
+static constexpr size_t HelpColumn = 32;
+static const size_t HelpWidth = TerminalWidth() - HelpColumn - 2;
+
+// Word-wraps an argument's help text for --help. argparse lines up each line of the help under the help column, so
+// lines are kept to HelpWidth characters to fit the terminal. Explicit newlines are kept, and a wrapped line keeps its
+// leading indentation, plus two spaces. "annotation" is the note argparse appends to the last line
+// ("[default: ...]", "[required]", "[may be repeated]"), so room is left for it there.
+
+static std::string WrapHelp(std::string_view text, std::string_view annotation = "")
+{
+	// A placeholder word as long as the annotation (plus its space) is wrapped along with the text, then removed
+	constexpr char placeholderChar = '\x1f';
+	const std::string placeholder = annotation.empty() ? "" : std::string(annotation.size(), placeholderChar);
+
+	std::string wrapped;
+	size_t start = 0;
+
+	while (start <= text.size())
+	{
+		size_t end = text.find('\n', start);
+
+		if (end == std::string_view::npos)
+			end = text.size();
+
+		std::string_view paragraph = text.substr(start, end - start);
+		const bool lastParagraph = (end == text.size());
+
+		const size_t indentSize = paragraph.find_first_not_of(' ') == std::string_view::npos ? 0 : paragraph.find_first_not_of(' ');
+		const std::string indent(indentSize, ' ');
+		const std::string continuationIndent = indent + (indentSize > 0 ? "  " : "");
+
+		std::vector<std::string> words;
+		size_t pos = indentSize;
+
+		while (pos < paragraph.size())
+		{
+			size_t wordEnd = paragraph.find(' ', pos);
+
+			if (wordEnd == std::string_view::npos)
+				wordEnd = paragraph.size();
+
+			if (wordEnd > pos)
+				words.emplace_back(paragraph.substr(pos, wordEnd - pos));
+
+			pos = wordEnd + 1;
+		}
+
+		if (lastParagraph && !placeholder.empty())
+			words.push_back(placeholder);
+
+		std::string line = indent;
+		bool lineHasWords = false;
+
+		for (const std::string& word : words)
+		{
+			if (lineHasWords && (line.size() + 1 + word.size() > HelpWidth))
+			{
+				wrapped += line + "\n";
+				line = continuationIndent;
+				lineHasWords = false;
+			}
+
+			line += (lineHasWords ? " " : "") + word;
+			lineHasWords = true;
+		}
+
+		wrapped += line;
+
+		if (!lastParagraph)
+			wrapped += "\n";
+
+		start = end + 1;
+	}
+
+	if (!placeholder.empty())
+	{
+		const size_t placeholderPos = wrapped.find(placeholderChar);
+		const size_t lineStart = (wrapped.rfind('\n', placeholderPos) == std::string::npos) ? 0 : (wrapped.rfind('\n', placeholderPos) + 1);
+
+		if ((lineStart > 0) && (wrapped.find_first_not_of(' ', lineStart) == placeholderPos))
+		{
+			// The annotation didn't fit, so it gets its own line, at the help column whatever the indentation above it.
+			// (argparse only lines up a final line that isn't empty, so it holds a single space.)
+			wrapped.erase(lineStart);
+			wrapped += ' ';
+		}
+		else
+		{
+			// Remove the placeholder and the space before it: argparse adds its own space before the annotation
+			size_t removeFrom = placeholderPos;
+
+			if ((removeFrom > 0) && (wrapped[removeFrom - 1] == ' '))
+				removeFrom--;
+
+			wrapped.erase(removeFrom);
+		}
+	}
+
+	return wrapped;
+}
+
 static std::string LossHelp()
 {
-	std::string help = "Training loss: comma-separated name[:weight][:key=value...] terms, e.g. mse:1,mrstft:0.0005:sc=0. Losses:";
+	std::string help = "Training loss, as comma-separated name[:weight][:key=value...] terms. Losses:";
 
 	for (auto& type : GetLossTypes())
 	{
@@ -450,12 +668,10 @@ static std::string LossHelp()
 
 		if (!type.Params.empty())
 		{
-			help += " [defaults:";
+			help += "\n      defaults:";
 
 			for (auto& [name, value] : type.Params)
 				help += std::format(" {}={}", name, value);
-
-			help += "]";
 		}
 	}
 
@@ -466,55 +682,64 @@ int main(int argc, char* argv[])
 {	
 	argparse::ArgumentParser program("nam-cpu-trainer", NCT_VERSION_STRING);
 
+	program.set_usage_max_line_width(TerminalWidth() - 2);
+
 	program.add_argument("-i", "--input")
 		.nargs(1)
 		.required()
 		.metavar("<input.wav>")
-		.help("Input .wav file use to capture");
+		.help(WrapHelp("Input .wav file used for the capture", "[required]"));
 
 	program.add_argument("-o", "--output")
 		.nargs(1)
 		.required()
 		.metavar("<output.wav>")
-		.help("Output (captured) .wav file");
+		.help(WrapHelp("Output (captured) .wav file", "[required]"));
 
 	program.add_argument("-c", "--channels")
 		.default_value(3)
 		.nargs(1)
 		.metavar("<numChannels>")
-		.help("Number of channels")
+		.help(WrapHelp("Number of channels", "[default: 3]"))
 		.scan<'i', int>();
 
 	program.add_argument("-t", "--threads")
 		.nargs(1)
 		.metavar("<numThreads>")
-		.help("Number of threads (defaults to detected # cores)")
+		.help(WrapHelp("Number of threads (defaults to the number of physical cores)"))
 		.scan<'i', int>();
 
 	program.add_argument("-e", "--epochs")
 		.default_value(1000)
 		.nargs(1, 1)
 		.metavar("<maxEpochs>")
-		.help("Maximum number of epochs to train for")
+		.help(WrapHelp("Maximum number of epochs to train for", "[default: 1000]"))
 		.scan<'i', int>();
 
 	program.add_argument("-r", "--rand")
 		.nargs(1, 1)
 		.metavar("<randomSeed>")
-		.help("Random seed for repeatability (by default a random value is used)")
+		.help(WrapHelp("Random seed, for repeatability (by default a random seed is used, and recorded in the model)"))
 		.scan<'i', int>();
 
 	program.add_argument("--input-noise")
 		.nargs(1, 1)
 		.metavar("<dBFS>")
-		.help("Add Gaussian noise at this RMS level (e.g. -75) to the training input (off by default)")
+		.help(WrapHelp("Add Gaussian noise at this RMS level (e.g. -75) to the training input (off by default)"))
 		.scan<'g', float>();
 
 	program.add_argument("-l", "--loss")
 		.default_value(std::string("mse:1,mrstft:0.0005"))
 		.nargs(1)
 		.metavar("<lossSpec>")
-		.help(LossHelp());
+		.help(WrapHelp(LossHelp(), "[default: \"mse:1,mrstft:0.0005\"]"));
+
+	program.add_argument("-m", "--metadata")
+		.append()
+		.metavar("<key=value>")
+		.help(WrapHelp("Add a key=value string to the model's metadata. Can be given more than once, e.g.:\n"
+			"    -m name=\"Boss SD-1\" -m modeled_by=Mike\n"
+			"NAM's standard keys include name, modeled_by, gear_make, gear_model, gear_type and tone_type", "[may be repeated]"));
 
 	try
 	{
@@ -574,9 +799,26 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 
+	MetadataPairs userMetadata;
+
+	try
+	{
+		if (program.is_used("--metadata"))
+			userMetadata = ParseMetadata(program.get<std::vector<std::string>>("--metadata"));
+	}
+	catch (const std::invalid_argument& e)
+	{
+		std::cerr << std::endl << "Invalid --metadata: " << e.what() << std::endl;
+
+		return 1;
+	}
+
 	std::cout << "Training NAM A2 with " << numChannels << " channels" << std::endl;
 	std::cout << "Loss: " << FormatLossSpec(lossSpec) << std::endl;
 	std::cout << "Random seed: " << seed << std::endl;
+
+	for (const auto& [key, value] : userMetadata)
+		std::cout << "Metadata: " << key << " = " << value << std::endl;
 
 	A2Types modelTrainerObj = GetTrainer(numChannels, numThreads, rand);
 
@@ -605,7 +847,7 @@ int main(int argc, char* argv[])
 
 		//TrainNAM(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
 
-		TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs, numChannels, outputNAMPath, inputNoiseDb, noiseRand, lossSpec, seed);
+		TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs, numChannels, outputNAMPath, inputNoiseDb, noiseRand, lossSpec, seed, userMetadata);
 
 	}, modelTrainerObj);
 
