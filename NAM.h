@@ -38,6 +38,22 @@ public:
 	{
 		assert(input.GetNumCols() == (output.GetNumCols() + GetReceptiveField()));
 
+		ForwardNoLayerOutput(input, condition, headOutput);
+
+		const size_t numSamplesOut = input.GetNumCols() - conv.GetReceptiveField();
+
+		// Layer output: 1x1 of the activation, plus the residual input
+		oneByOne.Forward(activationOut, output);
+
+		auto outputMap = output.GetEigenMap();
+		size_t inputOffset = input.GetNumCols() - numSamplesOut;
+		outputMap.noalias() += input.Slice(inputOffset, numSamplesOut).GetEigenMapConst();
+	}
+
+	// Forward without the layer output, for the last layer, whose output nothing uses (only its contribution to the
+	// head). The matching backward pass is BackwardNoLayerOutput().
+	void ForwardNoLayerOutput(const ChannelRowSpan<T, Channels>& input, const ChannelRowSpan<T, ConditionSize>& condition, const ChannelRowSpan<T, Channels>& headOutput)
+	{
 		const size_t numSamplesIn = input.GetNumCols();
 		const size_t numSamplesOut = numSamplesIn - conv.GetReceptiveField();
 
@@ -61,13 +77,6 @@ public:
 
 		auto headOutputMap = headOutput.GetEigenMap();
 		headOutputMap.noalias() += activationOut.Slice(numSamplesOut - headOutputSamples, headOutputSamples).GetEigenMapConst();
-
-		// Not needed on last layer - can optimize
-		oneByOne.Forward(activationOut, output);	
-
-		auto outputMap = output.GetEigenMap();
-		size_t inputOffset = input.GetNumCols() - numSamplesOut;
-		outputMap.noalias() += input.Slice(inputOffset, numSamplesOut).GetEigenMapConst();
 	}
 
 	void Backward(const ChannelRowSpan<T, Channels>& input, const ChannelRowSpan<T, ConditionSize>& condition, const ChannelRowSpan<T, Channels>& dOutput, const ChannelRowSpan<T, Channels>& dHeadOutput, const ChannelRowSpan<T, Channels>& dInput)
@@ -235,7 +244,9 @@ public:
 				{
 					currentSize -= std::get<layerIndex>(layers).GetReceptiveField();
 
-					trainingContext->GetBufferArena().template GetBuffer<Channels>(layerOuts[layerIndex], currentSize);
+					// The last layer's output isn't used, so it doesn't get a buffer
+					if constexpr (layerIndex < NumLayers - 1)
+						trainingContext->GetBufferArena().template GetBuffer<Channels>(layerOuts[layerIndex], currentSize);
 				});
 
 			trainingContext->GetBufferArena().template GetBuffer<Channels>(headOutput, currentSize);
@@ -247,14 +258,21 @@ public:
 
 		ForEachIndex<NumLayers>([&](auto layerIndex)
 			{
-				if constexpr (layerIndex == 0)
+				auto& layer = std::get<layerIndex>(layers);
+
+				auto& layerInput = [&]() -> ChannelBufferDynamic<T, Channels>&
 				{
-					std::get<layerIndex>(layers).Forward(layerArrayRechannelOut, input, layerOuts[layerIndex], headOutput);
-				}
+					if constexpr (layerIndex == 0)
+						return layerArrayRechannelOut;
+					else
+						return layerOuts[layerIndex - 1];
+				}();
+
+				// Only the last layer's contribution to the head is used, not its output
+				if constexpr (layerIndex == NumLayers - 1)
+					layer.ForwardNoLayerOutput(layerInput, input, headOutput);
 				else
-				{
-					std::get<layerIndex>(layers).Forward(layerOuts[layerIndex - 1], input, layerOuts[layerIndex], headOutput);
-				}
+					layer.Forward(layerInput, input, layerOuts[layerIndex], headOutput);
 			});
 
 		oneByOne.Forward(headOutput, output);
