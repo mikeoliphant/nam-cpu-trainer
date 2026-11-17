@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 set(CMAKE_CXX_STANDARD 20)
 
-project(nam-cpu-trainer VERSION 0.0.4)
+project(nam-cpu-trainer VERSION 0.1.0)
 
 if (MSVC)
 	add_compile_options(
