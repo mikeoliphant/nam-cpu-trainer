@@ -120,7 +120,7 @@ Current differences/limitations with respect to the standard python NAM trainer:
 
 Performance optimization is still very much in progress, but it is already *much* better than trying to run the standard python trainer on CPU. In fact, performance stacks up very well against GPU training performance.
 
-For example, my Ryzen 7 5700X CPU with 3200MHz RAM trains **A2 "lite"** models at **~1.5 seconds** per epoch, and **A2 "full"** models at **~4.5 seconds** per epoch.
+For example, my Ryzen 7 5700X CPU with 3200MHz RAM trains **A2 "lite"** models at **~1.5 seconds** per epoch, and **A2 "full"** models at **~4 seconds** per epoch.
 
 Performance depends highly on the following factors:
 
