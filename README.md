@@ -11,37 +11,47 @@ CPU that supports the AVX2 instruction set. The Mac binary is only for Arm64 (no
 
 ```
 Usage: nam-cpu-trainer [--help] [--version] --input <input.wav> --output <output.wav>
-                       [--channels <numChannels>] [--threads <numThreads>] [--epochs <maxEpochs>]
+                       [--channels <channels>] [--threads <numThreads>] [--epochs <maxEpochs>]
                        [--rand <randomSeed>] [--input-noise <dBFS>] [--loss <lossSpec>]
                        [--metadata <key=value>]...
 
 Optional arguments:
-  -h, --help                    shows help message and exits
-  -v, --version                 prints version information and exits
-  -i, --input <input.wav>       Input .wav file used for the capture [required]
-  -o, --output <output.wav>     Output (captured) .wav file [required]
-  -c, --channels <numChannels>  Number of channels [default: 3]
-  -t, --threads <numThreads>    Number of threads (defaults to the number of physical cores)
-  -e, --epochs <maxEpochs>      Maximum number of epochs to train for [default: 1000]
-  -r, --rand <randomSeed>       Random seed, for repeatability (by default a random seed is used,
-                                and recorded in the model)
-  --input-noise <dBFS>          Add Gaussian noise at this RMS level (e.g. -75) to the training
-                                input (off by default)
-  -l, --loss <lossSpec>         Training loss, as comma-separated name[:weight][:key=value...]
-                                terms. Losses:
-                                    mse - mean squared error
-                                    esr - error-to-signal ratio
-                                    mrstft - multi-resolution STFT (sc = spectral convergence
-                                      weight, logmag = log-magnitude weight)
-                                      defaults: sc=0 logmag=1 [default: "mse:1,mrstft:0.0005"]
-  -m, --metadata <key=value>    Add a key=value string to the model's metadata. Can be given more
-                                than once, e.g.:
-                                    -m name="Boss SD-1" -m modeled_by=Mike
-                                NAM's standard keys include name, modeled_by, gear_make,
-                                gear_model, gear_type and tone_type [may be repeated]
+  -h, --help                  shows help message and exits
+  -v, --version               prints version information and exits
+  -i, --input <input.wav>     Input .wav file used for the capture [required]
+  -o, --output <output.wav>   Output (captured) .wav file [required]
+  -c, --channels <channels>   Number of channels. A comma-separated list (like the default)
+                              trains a model of each size and packs them into one .nam file,
+                              like NAM's standard A2 (3 and 8 channels). A single value writes a
+                              plain model. Supported sizes: 1, 2, 3, 4, 8 and 16
+                                [default: "3,8"]
+  -t, --threads <numThreads>  Number of threads (defaults to the number of physical cores)
+  -e, --epochs <maxEpochs>    Maximum number of epochs to train for [default: 1000]
+  -r, --rand <randomSeed>     Random seed, for repeatability (by default a random seed is used,
+                              and recorded in the model)
+  --input-noise <dBFS>        Add Gaussian noise at this RMS level (e.g. -75) to the training
+                              input (off by default)
+  -l, --loss <lossSpec>       Training loss, as comma-separated name[:weight][:key=value...]
+                              terms. Losses:
+                                  mse - mean squared error
+                                  esr - error-to-signal ratio
+                                  mrstft - multi-resolution STFT (sc = spectral convergence
+                                    weight, logmag = log-magnitude weight)
+                                    defaults: sc=0 logmag=1 [default: "mse:1,mrstft:0.0005"]
+  -m, --metadata <key=value>  Add a key=value string to the model's metadata. Can be given more
+                              than once, e.g.:
+                                  -m name="Boss SD-1" -m modeled_by=Mike
+                              NAM's standard keys include name, modeled_by, gear_make,
+                              gear_model, gear_type and tone_type [may be repeated]
 ```
 
-For example, to train a full (8 channel) model for 100 epochs:
+For example, to train for 100 epochs:
+
+```
+nam-cpu-trainer -i input.wav -o output.wav -e 100
+```
+
+By default, this trains a packed A2 model: a 3 channel ("lite") and an 8 channel ("full") model in one .nam file, the same format the standard NAM trainer produces (see [Packed models](#packed-models)). To train a single model instead, give a single channel count, for example just the full model:
 
 ```
 nam-cpu-trainer -i input.wav -o output.wav -c 8 -e 100
@@ -51,7 +61,15 @@ When training concludes, the resulting .nam file will be the same path/name as "
 
 If an epoch has a new low ESR, you will see a "*" at the end of the line. This means that weights have been stored for this epoch, and it will be used to produce the model unless a better epoch comes later.
 
-To end training early while still producing a model, hit "Ctrl-C". This will stop training after the current epoch ends. Hitting "Ctrl-C" again will immediately abort training - but will **not** create a model.
+To end training early while still producing a model, hit "Ctrl-C". This will stop training after the current epoch ends, keeping the best epoch so far. When training a packed model, any remaining model sizes are skipped, and the models trained so far are written: a packed model if there are two or more, otherwise a single model. Hitting "Ctrl-C" again before training has stopped will immediately abort training - but will **not** create a model.
+
+### Packed models
+
+When `-c` is given a comma-separated list of channel counts (the default is `3,8`), a model of each size is trained, smallest first, and they are written as one "SlimmableContainer" .nam file. Players that support packed models pick one of the models with a size or quality setting: with two models, a setting below 0.5 uses the smaller model and anything above that uses the larger one. Older players that don't support packed models can't load these files, so use a single channel count (such as `-c 8`) for those.
+
+The smallest model trains fastest, so training it first gives the quickest indication of whether a capture is training well. Each model size starts from the same random seed, so each model in a packed file is the same as training that size on its own with `-c` and the same seed.
+
+Each model in the file has its own loudness and `nam_cpu_trainer` metadata. The file's top-level metadata has the largest model's loudness and any `-m` metadata.
 
 ### Training loss
 
@@ -85,7 +103,7 @@ The output .nam file records the training settings and results in a `nam_cpu_tra
 
 ## Functionality
 
-The trainer is currently capable of training NAM A2 models of 1, 2, 3 ("lite"), 4, 8 ("full"), or 16 channels.
+The trainer is currently capable of training NAM A2 models of 1, 2, 3 ("lite"), 4, 8 ("full"), or 16 channels, either as a single model or packed together into one model file. By default it trains a packed 3 and 8 channel model, like the standard NAM trainer.
 
 It currently is designed for "input.wav" to be the default v3 NAM/Tone3000 sweep wav file. Other files will work, but training/validation sections will not get configured correctly.
 
@@ -95,7 +113,6 @@ Current differences/limitations with respect to the standard python NAM trainer:
 
 - no auto-alignment is currently done for the input/output files
 - no "gain" value is added to the model
-- "packed" A2 (lite/full) is not currently supported
 
 ## Performance
 

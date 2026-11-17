@@ -2,6 +2,7 @@
 #include <format>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <vector>
 
 #include "NeuralModel.h"
@@ -10,6 +11,47 @@
 #include "argparse.hpp"
 #include "Loss.h"
 #include "MrStft.h"
+
+// Prints the delay, MSE, ESR and MR-STFT of a model's output against the capture over the given stretch
+static void EvaluateModel(NeuralAudio::NeuralModel& model, const float* input, const float* target, size_t numFrames)
+{
+	std::vector<float> namOutput(numFrames);
+
+	model.Process(input, namOutput.data(), numFrames);
+
+	MSELossT<float> mseLoss;
+
+	int minDelay = 0;
+	double minMSEErr = std::numeric_limits<double>::max();
+
+	for (int delay = -128; delay < 128; delay++)
+	{
+		double delayErr = mseLoss.GetMeanLoss(namOutput.data(), target - delay, numFrames);
+
+		if (delayErr < minMSEErr)
+		{
+			minMSEErr = delayErr;
+			minDelay = delay;
+		}
+	}
+
+	std::cout << "Delay samples: " << minDelay << std::endl;
+
+	std::cout << "MSE: " << std::format("{:.8f}", minMSEErr) << std::endl;
+
+	ESRLossT<float> esrLoss;
+
+	double esrErr = esrLoss.GetMeanLoss(namOutput.data(), target - minDelay, numFrames);
+
+	std::cout << "ESR: " << std::format("{:.8f}", esrErr) << std::endl;
+
+	MultiResolutionStftLossT<float> mrstftLoss;
+	mrstftLoss.SetWeights(1.0, 1.0);	// full auraloss-style MRSTFT (SC + log-mag) for comparability
+
+	double mrstftErr = mrstftLoss.GetMeanLoss(namOutput.data(), target - minDelay, numFrames);
+
+	std::cout << "MR-STFT: " << std::format("{:.8f}", mrstftErr) << std::endl;
+}
 
 int main(int argc, char* argv[])
 {
@@ -25,13 +67,20 @@ int main(int argc, char* argv[])
 		.nargs(1)
 		.required()
 		.metavar("<input.wav>")
-		.help("Input .wav file use to capture");
+		.help("Input .wav file used for the capture");
 
 	program.add_argument("-o", "--output")
 		.nargs(1)
 		.required()
 		.metavar("<output.wav>")
 		.help("Output (captured) .wav file");
+
+	program.add_argument("-q", "--quality")
+		.default_value(1.0f)
+		.nargs(1)
+		.metavar("<0-1>")
+		.help("Quality setting, which picks the model used from a packed model (as a player's setting would)")
+		.scan<'g', float>();
 
 	try
 	{
@@ -64,50 +113,36 @@ int main(int argc, char* argv[])
 	float* inData = drwav_open_file_and_read_pcm_frames_f32(inputPath.string().c_str(), &channels, &sampleRate, &numFrames, nullptr);
 	float* targetData = drwav_open_file_and_read_pcm_frames_f32(capturePath.string().c_str(), &channels, &sampleRate, &numFrames, nullptr);
 
+	if ((inData == nullptr) || (targetData == nullptr))
+	{
+		std::cerr << "Couldn't read " << ((inData == nullptr) ? inputPath : capturePath).string() << std::endl;
+
+		return 1;
+	}
+
 	size_t verifyFrames = 48000 * 9;
 
 	size_t verifyOffset = (size_t)numFrames - verifyFrames;
 
 	NeuralAudio::NeuralModelLoader loader;
 
-	auto namModel = loader.CreateFromFile(namPath);
+	// For a packed model, NeuralAudio uses this to pick which of its models is active
+	loader.SetDefaultQualityScaleFactor(program.get<float>("--quality"));
 
-	std::vector<float> namOutput(verifyFrames);
+	std::unique_ptr<NeuralAudio::NeuralModel> model(loader.CreateFromFile(namPath));
 
-	namModel->Process(inData + verifyOffset, namOutput.data(), verifyFrames);
-
-	float* targetPtr = targetData + verifyOffset;
-
-	MSELossT<float> mseLoss;
-
-	int minDelay = 0;
-	double minMSEErr = std::numeric_limits<double>::max();
-
-	for (int delay = -128; delay < 128; delay++)
+	if (!model)
 	{
-		double delayErr = mseLoss.GetMeanLoss(namOutput.data(), targetPtr - delay, verifyFrames);
+		std::cerr << "Couldn't load " << namPath.string() << std::endl;
 
-		if (delayErr < minMSEErr)
-		{
-			minMSEErr = delayErr;
-			minDelay = delay;
-		}
+		return 1;
 	}
 
-	std::cout << "Delay samples: " << minDelay << std::endl;
+	if (model->HasQualityScaling())
+		std::cout << "Packed model, quality setting: " << model->GetQualityScaleFactor() << std::endl;
 
-	std::cout << "MSE: " << std::format("{:.8f}", minMSEErr) << std::endl;
+	EvaluateModel(*model, inData + verifyOffset, targetData + verifyOffset, verifyFrames);
 
-	ESRLossT<float> esrLoss;
-
-	double esrErr = esrLoss.GetMeanLoss(namOutput.data(), targetPtr - minDelay, verifyFrames);
-
-	std::cout << "ESR: " << std::format("{:.8f}", esrErr) << std::endl;
-
-	MultiResolutionStftLossT<float> mrstftLoss;
-	mrstftLoss.SetWeights(1.0, 1.0);	// full auraloss-style MRSTFT (SC + log-mag) for comparability
-
-	double mrstftErr = mrstftLoss.GetMeanLoss(namOutput.data(), targetPtr - minDelay, verifyFrames);
-
-	std::cout << "MR-STFT: " << std::format("{:.8f}", mrstftErr) << std::endl;
+	drwav_free(inData, nullptr);
+	drwav_free(targetData, nullptr);
 }

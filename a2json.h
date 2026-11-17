@@ -91,4 +91,26 @@ constexpr std::string_view A2JsonData = R"(
   "weights": [ {{WEIGHTS}} ]
 }
 )";
+
+// Packed ("SlimmableContainer") template: several complete models (smallest first), each with a max_value threshold.
+// A player picks the first model whose max_value is above its size setting (0 to 1). The container has no weights of
+// its own.
+constexpr std::string_view PackedJsonData = R"(
+{
+  "version": "0.7.0",
+  "metadata": {
+    "date": {{DATE}},
+    "loudness": {{LOUDNESS}},{{USER_METADATA}}
+    "nam_cpu_trainer": {{TRAINER_INFO}}
+  },
+  "sample_rate": 48000.0,
+  "architecture": "SlimmableContainer",
+  "config": {
+    "submodels": [
+{{SUBMODELS}}
+    ]
+  },
+  "weights": []
+}
+)";
       

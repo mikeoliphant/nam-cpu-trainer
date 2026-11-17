@@ -78,7 +78,8 @@ void SignalHandler(int sigNum)
 	{
 		std::signal(sigNum, SIG_DFL);
 		
-		std::cout << std::endl << "Stopping after next epoch. Press ctl-c again to force immediate exit (model will not be saved)." << std::endl;
+		std::cout << std::endl << "Stopping after the current epoch (keeping the best epoch so far, and skipping any remaining model sizes)." << std::endl;
+		std::cout << "Press ctrl-c again to abort immediately (no model will be saved)." << std::endl;
 
 		keepRunning = 0; // Set flag to break the loop
 	}
@@ -286,17 +287,69 @@ double GetRMSLevel(float* data, size_t numSamples)
 	return LinearToDbAmplitude(std::sqrt(meanSquare));
 }
 
+// The current date and time as a .nam "date" object
+static std::string CurrentDateJson()
+{
+	auto now = std::chrono::system_clock::now();
+	auto system_days = std::chrono::floor<std::chrono::days>(now);
+	std::chrono::year_month_day ymd{ system_days };
+	std::chrono::hh_mm_ss hms{ std::chrono::floor<std::chrono::seconds>(now - system_days) };
+
+	return std::format(
+		"{{ "
+		" \"year\": {},"
+		" \"month\": {},"
+		" \"day\": {},"
+		" \"hour\": {},"
+		" \"minute\": {},"
+		" \"second\": {}"
+		" }}",
+		int(ymd.year()),
+		unsigned(ymd.month()),
+		unsigned(ymd.day()),
+		hms.hours().count(),
+		hms.minutes().count(),
+		hms.seconds().count()
+	);
+}
+
+// A trained model: its complete .nam JSON (with a {{USER_METADATA}} placeholder still in it, filled in when the file is
+// written), and what a packed container needs to know about it
+struct TrainedModel
+{
+	size_t Channels = 0;
+	std::string Json;
+	double Loudness = 0;
+};
+
+// Owns a buffer from drwav, freeing it when done
+struct WavData
+{
+	float* Data = nullptr;
+
+	~WavData() { drwav_free(Data, nullptr); }
+};
+
+// Trains one model and returns its .nam JSON, or nothing if training failed
 template <typename ModelTrainer>
-void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand, const LossSpec& lossSpec, unsigned int seed, const MetadataPairs& userMetadata)
+std::optional<TrainedModel> TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::optional<float> inputNoiseDb, std::mt19937 noiseRand, const LossSpec& lossSpec, unsigned int seed)
 {
 	unsigned int channels;
 	unsigned int sampleRate;
 	drwav_uint64 numFrames;
 
-	std::signal(SIGINT, SignalHandler);
+	WavData inWav { drwav_open_file_and_read_pcm_frames_f32(inWavePath.string().c_str(), &channels, &sampleRate, &numFrames, nullptr) };
+	WavData targetWav { drwav_open_file_and_read_pcm_frames_f32(targetWavePath.string().c_str(), &channels, &sampleRate, &numFrames, nullptr) };
 
-	float* inData = drwav_open_file_and_read_pcm_frames_f32(inWavePath.string().c_str(), &channels, &sampleRate, &numFrames, nullptr);
-	float* targetData = drwav_open_file_and_read_pcm_frames_f32(targetWavePath.string().c_str(), &channels, &sampleRate, &numFrames, nullptr);
+	float* inData = inWav.Data;
+	float* targetData = targetWav.Data;
+
+	if ((inData == nullptr) || (targetData == nullptr))
+	{
+		std::cerr << "Couldn't read " << ((inData == nullptr) ? inWavePath : targetWavePath).string() << std::endl;
+
+		return std::nullopt;
+	}
 
 	size_t startOffset = 48000 * 13;
 
@@ -340,7 +393,7 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 	{
 		std::cerr << "Training target is silent or contains invalid samples - cannot normalize" << std::endl;
 
-		return;
+		return std::nullopt;
 	}
 
 	constexpr double targetNormalizeDb = -18.0;
@@ -399,27 +452,7 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 		}
 	}
 
-	auto now = std::chrono::system_clock::now();
-	auto system_days = std::chrono::floor<std::chrono::days>(now);
-	std::chrono::year_month_day ymd{ system_days };
-	std::chrono::hh_mm_ss hms{ std::chrono::floor<std::chrono::seconds>(now - system_days) };
-
-	std::string dateStr = std::format(
-		"{{ "
-		" \"year\": {},"
-		" \"month\": {},"
-		" \"day\": {},"
-		" \"hour\": {},"
-		" \"minute\": {},"
-		" \"second\": {}"
-		" }}",
-		int(ymd.year()),
-		unsigned(ymd.month()),
-		unsigned(ymd.day()),
-		hms.hours().count(),
-		hms.minutes().count(),
-		hms.seconds().count()
-	);
+	std::string dateStr = CurrentDateJson();
 
 	// One "activation" entry per layer, from the model's activation type
 	using ModelType = std::remove_reference_t<decltype(trainer.GetModel())>;
@@ -456,7 +489,10 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 
 	ReplaceVariable(trainerInfoStr, "\n", "\n    ");
 
-	std::map<std::string, std::string> variables =
+	// {{USER_METADATA}} is left in, to be filled in when the file is written: a plain model gets the user metadata, but the
+	// models in a packed file don't (it goes in the container). Filling it in last also means placeholder-like text in
+	// the user's values is left alone.
+	std::vector<std::pair<std::string, std::string>> variables =
 	{
 		{"{{CHANNELS}}", std::to_string(numChannels) },
 		{"{{HEADSCALE}}", std::format("{:.9g}", weights[weights.size() - 1]) },	// full precision, so it matches the last weight
@@ -464,8 +500,7 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 		{"{{LOUDNESS}}", std::to_string(loudnessRMS) },
 		{"{{WEIGHTS}}", weightStr },
 		{"{{ACTIVATIONS}}", activationStr },
-		{"{{TRAINER_INFO}}", trainerInfoStr },
-		{"{{USER_METADATA}}", MetadataToJson(userMetadata) }
+		{"{{TRAINER_INFO}}", trainerInfoStr }
 	};
 
 	std::string jsonOutStr = std::string(A2JsonData);
@@ -475,27 +510,101 @@ void TrainNAM(ModelTrainer& trainer, const std::filesystem::path inWavePath, con
 		ReplaceVariable(jsonOutStr, variable, value);
 	}
 
-	std::ofstream namStream(outputNAMPath);
+	TrainedModel model;
 
-	namStream << jsonOutStr;
+	model.Channels = numChannels;
+	model.Json = jsonOutStr;
+	model.Loudness = loudnessRMS;
+
+	return model;
 }
 
 // Keeps the compiler happy
-std::vector<float> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::filesystem::path outputNAMPath, std::optional<float> inputNoiseDb, std::mt19937 noiseRand, const LossSpec& lossSpec, unsigned int seed, const MetadataPairs& userMetadata)
+std::optional<TrainedModel> TrainNAM(std::nullptr_t& trainer, const std::filesystem::path inWavePath, const std::filesystem::path targetWavePath, size_t maxEpochs, size_t numChannels, std::optional<float> inputNoiseDb, std::mt19937 noiseRand, const LossSpec& lossSpec, unsigned int seed)
 {
 	(void)trainer;
 	(void)inWavePath;
 	(void)targetWavePath;
 	(void)maxEpochs;
 	(void)numChannels;
-	(void)outputNAMPath;
 	(void)inputNoiseDb;
 	(void)noiseRand;
 	(void)lossSpec;
 	(void)seed;
-	(void)userMetadata;
 
-	return std::vector<float>();
+	return std::nullopt;
+}
+
+// Indents every line after the first, so multi-line JSON can be placed inside another JSON template
+static std::string IndentJson(std::string json, const std::string& indent)
+{
+	// Templates start with a newline
+	while (!json.empty() && ((json.front() == '\n') || (json.front() == '\r')))
+		json.erase(0, 1);
+
+	while (!json.empty() && ((json.back() == '\n') || (json.back() == '\r')))
+		json.pop_back();
+
+	ReplaceVariable(json, "\n", "\n" + indent);
+
+	return json;
+}
+
+// A packed ("SlimmableContainer") .nam file holding the models, smallest first. A player picks the first model whose
+// max_value is above its size setting (0 to 1), so the thresholds are spread evenly, with the largest model at 1.0.
+// The top-level loudness is the largest model's.
+static std::string PackedModelJson(const std::vector<TrainedModel>& models, const MetadataPairs& userMetadata, const LossSpec& lossSpec, unsigned int seed)
+{
+	std::string submodels;
+
+	for (size_t i = 0; i < models.size(); i++)
+	{
+		const double maxValue = (i == models.size() - 1) ? 1.0 : (double)(i + 1) / (double)models.size();
+
+		if (i > 0)
+			submodels += ",\n";
+
+		submodels += "      {\n";
+		submodels += std::format("        \"max_value\": {:.9g},\n", maxValue);
+		std::string modelJson = models[i].Json;
+
+		ReplaceVariable(modelJson, "{{USER_METADATA}}", "");	// the user metadata goes in the container
+
+		submodels += "        \"model\": " + IndentJson(modelJson, "        ") + "\n";
+		submodels += "      }";
+	}
+
+	nlohmann::ordered_json trainerInfo;
+
+	trainerInfo["version"] = NCT_VERSION_STRING;
+	trainerInfo["loss"] = FormatLossSpec(lossSpec);
+	trainerInfo["seed"] = seed;
+
+	for (const TrainedModel& model : models)
+		trainerInfo["channels"].push_back(model.Channels);
+
+	std::string trainerInfoStr = trainerInfo.dump(2);
+
+	ReplaceVariable(trainerInfoStr, "\n", "\n    ");
+
+	// Substituted in this order. The submodels and user-supplied text go last, so placeholder-like text in them is left alone.
+	std::vector<std::pair<std::string, std::string>> variables =
+	{
+		{"{{DATE}}", CurrentDateJson() },
+		{"{{LOUDNESS}}", std::to_string(models.back().Loudness) },
+		{"{{TRAINER_INFO}}", trainerInfoStr },
+		{"{{SUBMODELS}}", submodels },
+		{"{{USER_METADATA}}", MetadataToJson(userMetadata) }
+	};
+
+	std::string json = std::string(PackedJsonData);
+
+	for (const auto& [variable, value] : variables)
+	{
+		ReplaceVariable(json, variable, value);
+	}
+
+	return json;
 }
 
 // Activation used for training: LeakyReLUT (standard A2) or FastTanhT (smooth, avoids zippering; exported as "Fasttanh")
@@ -658,6 +767,49 @@ static std::string WrapHelp(std::string_view text, std::string_view annotation =
 	return wrapped;
 }
 
+// Parses --channels: one channel count, or a comma-separated list for a packed model. Returned smallest first.
+// Throws std::invalid_argument with a readable message.
+static std::vector<size_t> ParseChannels(const std::string& text)
+{
+	static const std::vector<size_t> supported = { 1, 2, 3, 4, 8, 16 };
+
+	std::vector<size_t> channels;
+	size_t start = 0;
+
+	while (start <= text.size())
+	{
+		size_t end = text.find(',', start);
+
+		if (end == std::string::npos)
+			end = text.size();
+
+		std::string item = text.substr(start, end - start);
+
+		item.erase(0, item.find_first_not_of(' '));
+		item.erase(item.find_last_not_of(' ') + 1);
+
+		char* parseEnd = nullptr;
+		unsigned long value = item.empty() ? 0 : std::strtoul(item.c_str(), &parseEnd, 10);
+
+		if (item.empty() || (*parseEnd != 0))
+			throw std::invalid_argument("\"" + text + "\" should be a channel count, or a comma-separated list of them");
+
+		if (std::find(supported.begin(), supported.end(), (size_t)value) == supported.end())
+			throw std::invalid_argument(std::to_string(value) + " channels isn't supported (supported: 1, 2, 3, 4, 8 and 16)");
+
+		if (std::find(channels.begin(), channels.end(), (size_t)value) != channels.end())
+			throw std::invalid_argument(std::to_string(value) + " channels is given more than once");
+
+		channels.push_back((size_t)value);
+
+		start = end + 1;
+	}
+
+	std::sort(channels.begin(), channels.end());
+
+	return channels;
+}
+
 static std::string LossHelp()
 {
 	std::string help = "Training loss, as comma-separated name[:weight][:key=value...] terms. Losses:";
@@ -697,11 +849,10 @@ int main(int argc, char* argv[])
 		.help(WrapHelp("Output (captured) .wav file", "[required]"));
 
 	program.add_argument("-c", "--channels")
-		.default_value(3)
+		.default_value(std::string("3,8"))
 		.nargs(1)
-		.metavar("<numChannels>")
-		.help(WrapHelp("Number of channels", "[default: 3]"))
-		.scan<'i', int>();
+		.metavar("<channels>")
+		.help(WrapHelp("Number of channels. A comma-separated list (like the default) trains a model of each size and packs them into one .nam file, like NAM's standard A2 (3 and 8 channels). A single value writes a plain model. Supported sizes: 1, 2, 3, 4, 8 and 16", "[default: \"3,8\"]"));
 
 	program.add_argument("-t", "--threads")
 		.nargs(1)
@@ -775,7 +926,18 @@ int main(int argc, char* argv[])
 
 	//std::cout << sizeof(A2BackpropT<float, 1, 8, A2KernelSizes, A2Dilations>) << std::endl;
 
-	size_t numChannels = (size_t)program.get<int>("--channels");
+	std::vector<size_t> channelSizes;
+
+	try
+	{
+		channelSizes = ParseChannels(program.get("--channels"));
+	}
+	catch (const std::invalid_argument& e)
+	{
+		std::cerr << std::endl << "Invalid --channels: " << e.what() << std::endl;
+
+		return 1;
+	}
 
 	size_t numThreads = program.is_used("--threads") ? (size_t)program.get<int>("--threads") : 0;
 
@@ -783,8 +945,6 @@ int main(int argc, char* argv[])
 
 	// Always use an explicit seed, so it can be recorded in the model and the run reproduced
 	unsigned int seed = program.is_used("--rand") ? (unsigned int)program.get<int>("--rand") : std::random_device{}();
-
-	std::mt19937 rand(seed);
 
 	LossSpec lossSpec;
 
@@ -813,21 +973,19 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 
-	std::cout << "Training NAM A2 with " << numChannels << " channels" << std::endl;
+	const bool packed = (channelSizes.size() > 1);
+
+	std::string channelList;
+
+	for (size_t c : channelSizes)
+		channelList += (channelList.empty() ? "" : ", ") + std::to_string(c);
+
+	std::cout << "Training NAM A2 with " << channelList << " channels" << (packed ? " (packed into one model)" : "") << std::endl;
 	std::cout << "Loss: " << FormatLossSpec(lossSpec) << std::endl;
 	std::cout << "Random seed: " << seed << std::endl;
 
 	for (const auto& [key, value] : userMetadata)
 		std::cout << "Metadata: " << key << " = " << value << std::endl;
-
-	A2Types modelTrainerObj = GetTrainer(numChannels, numThreads, rand);
-
-	if (std::holds_alternative<std::nullptr_t>(modelTrainerObj))
-	{
-		std::cerr << std::endl << "Supported channel sizes are 1, 2, 4, 8 and 16" << std::endl;
-
-		return 1;
-	}
 
 	std::optional<float> inputNoiseDb;
 
@@ -836,20 +994,74 @@ int main(int argc, char* argv[])
 		inputNoiseDb = program.get<float>("--input-noise");
 	}
 
-	// Seeded from the (already copied) trainer seed, so --rand makes the noise repeatable too
-	std::mt19937 noiseRand(rand());
+	// Ctrl-C stops training after the current epoch, skipping any remaining model sizes. What has been trained is written.
+	std::signal(SIGINT, SignalHandler);
 
-	std::visit([&](auto& modelTrainer)
+	// Smallest first: it trains fastest, so a capture that isn't converging shows up soonest
+	std::vector<TrainedModel> models;
+
+	for (size_t i = 0; i < channelSizes.size(); i++)
 	{
-		//modelTrainer->TestBackprop(0, randData.data(), randData.data(), MAX_BATCH_SIZE);
+		const size_t numChannels = channelSizes[i];
 
-		//modelTrainer->TrainIdentity(sinData);
+		if (packed)
+			std::cout << std::endl << "=== " << numChannels << " channels (model " << (i + 1) << " of " << channelSizes.size() << ") ===" << std::endl;
 
-		//TrainNAM(modelTrainer, R"(C:\Share\Recordings\NAM\NAMv3Input.wav)", R"(C:\Share\Recordings\NAM\BossSD1Capture.wav)");
+		// Each size starts from the same seed, so its model is the same as training that size on its own
+		std::mt19937 rand(seed);
 
-		TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs, numChannels, outputNAMPath, inputNoiseDb, noiseRand, lossSpec, seed, userMetadata);
+		A2Types modelTrainerObj = GetTrainer(numChannels, numThreads, rand);
 
-	}, modelTrainerObj);
+		// Seeded from the (already copied) trainer seed, so --rand makes the noise repeatable too
+		std::mt19937 noiseRand(rand());
+
+		std::optional<TrainedModel> model;
+
+		std::visit([&](auto& modelTrainer)
+		{
+			model = TrainNAM(modelTrainer, inputPath, capturePath, maxEpochs, numChannels, inputNoiseDb, noiseRand, lossSpec, seed);
+
+		}, modelTrainerObj);
+
+		if (!model)
+			return 1;
+
+		models.push_back(std::move(*model));
+
+		if (keepRunning == 0)
+			break;	// stopped with ctrl-c: skip any remaining sizes
+	}
+
+	// Two or more trained models are packed. A single one (including when a packed run was stopped during its first
+	// model) is written as a plain model.
+	std::string modelJson;
+
+	if (models.size() > 1)
+	{
+		modelJson = PackedModelJson(models, userMetadata, lossSpec, seed);
+	}
+	else
+	{
+		modelJson = models.front().Json;
+
+		ReplaceVariable(modelJson, "{{USER_METADATA}}", MetadataToJson(userMetadata));
+	}
+
+	std::ofstream namStream(outputNAMPath);
+
+	namStream << modelJson;
+
+	std::string writtenSizes;
+
+	for (const TrainedModel& trained : models)
+		writtenSizes += (writtenSizes.empty() ? "" : ", ") + std::to_string(trained.Channels);
+
+	std::cout << std::endl;
+
+	if (models.size() < channelSizes.size())
+		std::cout << "Stopped early: only the " << writtenSizes << " channel model" << ((models.size() > 1) ? "s were" : " was") << " trained" << std::endl;
+
+	std::cout << "Wrote " << ((models.size() > 1) ? "packed model" : "model") << " (" << writtenSizes << " channels) to " << outputNAMPath.string() << std::endl;
 
 	return 0;
 }
