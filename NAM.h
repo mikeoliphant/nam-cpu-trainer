@@ -261,13 +261,14 @@ public:
 			{
 				auto& layer = std::get<layerIndex>(layers);
 
-				auto& layerInput = [&]() -> ChannelBufferDynamic<T, Channels>&
-				{
-					if constexpr (layerIndex == 0)
-						return layerArrayRechannelOut;
-					else
-						return layerOuts[layerIndex - 1];
-				}();
+				ChannelBufferDynamic<T, Channels>* layerInputPtr;
+
+				if constexpr (layerIndex == 0)
+					layerInputPtr = &layerArrayRechannelOut;
+				else
+					layerInputPtr = &layerOuts[layerIndex - 1];
+
+				auto& layerInput = *layerInputPtr;
 
 				// Only the last layer's contribution to the head is used, not its output
 				if constexpr (layerIndex == NumLayers - 1)
