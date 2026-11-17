@@ -244,9 +244,10 @@ public:
 				{
 					currentSize -= std::get<layerIndex>(layers).GetReceptiveField();
 
-					// The last layer's output isn't used, so it doesn't get a buffer
+					// The last layer's output isn't used, so it doesn't get a buffer.
+					// (GCC needs "this->" to find the base-class member inside "if constexpr" in a generic lambda.)
 					if constexpr (layerIndex < NumLayers - 1)
-						trainingContext->GetBufferArena().template GetBuffer<Channels>(layerOuts[layerIndex], currentSize);
+						this->trainingContext->GetBufferArena().template GetBuffer<Channels>(layerOuts[layerIndex], currentSize);
 				});
 
 			trainingContext->GetBufferArena().template GetBuffer<Channels>(headOutput, currentSize);
